@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+
 """
 Ottoneu Auto Roster Set
 Andrew Cross
@@ -12,10 +13,14 @@ The script will only consider benched position players as being available to be 
 """
 
 import cookielib 
+import urllib
 import urllib2 
 import mechanize
 from bs4 import BeautifulSoup
+import datetime
 import pandas as pd
+import credentials as crd
+
 pd.set_option('expand_frame_repr', False) #for testing
 
 # Browser 
@@ -25,7 +30,7 @@ br = mechanize.Browser()
 cookiejar = cookielib.LWPCookieJar() 
 br.set_cookiejar(cookiejar) 
 
-# Broser options 
+# Browser options 
 br.set_handle_equiv(True)
 br.set_handle_gzip(True)
 br.set_handle_redirect(True)
@@ -33,17 +38,17 @@ br.set_handle_referer(True)
 br.set_handle_robots(False)
 
 br.set_handle_refresh( mechanize._http.HTTPRefreshProcessor(), max_time = 1 ) 
-br.addheaders = [ ( 'User-agent', 'Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9.0.1) Gecko/2008071615 Fedora/3.0.1-1.fc9 Firefox/3.0.1' ) ] 
+br.addheaders = [ ( 'User-agent', 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/51.0.2704.103 Safari/537.36' ) ] 
 
 # Authentication
 br.open("http://www.fangraphs.com/blogs/wp-login.php?redirect_to=http%3A//www.fangraphs.com/redirect.aspx?s=ottoneu.fangraphs.com") 
 br.select_form(name="loginform") 
-br["log"] = "" #"log" corresponds to the name tag on the form
-br["pwd"] = ""
+br["log"] = crd.credentials['user'] #"log" corresponds to the name tag on the form
+br["pwd"] = crd.credentials['passwd']
 res = br.submit() 
 
-
-url = br.open("https://ottoneu.fangraphs.com/90/setlineups") 
+today = datetime.datetime.today().strftime('%Y-%m-%d')
+url = br.open("https://ottoneu.fangraphs.com/90/setlineups?date=%s" % ('2016-07-06'))#today) 
 page = url.read()
 soup = BeautifulSoup(page, "html.parser") 
 
@@ -81,12 +86,19 @@ if soup.find(id="team-switcher-menu"):
           for pos in player[1].find('td',{'data-player-positions':True})['data-player-positions'].split("/"):
             df.loc[player[0],pos] = True
 
- 
 
 
+#After the page has been scraped, you'll need to institute your logic for moving players around
+def movePlayer(date,PlayerID,OldPosition,NewPosition):
+  #The format the server is looking for is an array notation that I can't figure out how to efficiently convert to from a python dictionary
+  data = "method=saveChanges&data[Date]=%s&data[Changes][0][PlayerID]=%s&data[Changes][0][OldPosition]=%s&data[Changes][0][NewPosition]=%s" % (date,PlayerID,OldPosition,NewPosition)
+  data = urllib.quote(data,safe="=&")
+  br.open("https://ottoneu.fangraphs.com/90/ajax/setlineups",data)
 
+df.loc[0,'starting'] = False
+df.loc[6,'starting'] = False
+df.loc[10,'starting'] = False
 
-
-
-      
-#Made it all the way to the ajax call at line 74 on ottoneuSetLineups.js
+#If there's anyone in the starting lineup that's that's not starting, move them
+for index, row in df[(df['pos'].isin(lineupPositions)) & (df['starting']==False) &(df['locked']!=True)].iterrows():
+  movePlayer(today,row['id'],row['pos'],'Bench')
