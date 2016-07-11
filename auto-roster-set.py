@@ -47,14 +47,14 @@ br["log"] = crd.credentials['user'] #"log" corresponds to the name tag on the fo
 br["pwd"] = crd.credentials['passwd']
 res = br.submit() 
 
-today = datetime.datetime.today().strftime('%Y-%m-%d')
-url = br.open("https://ottoneu.fangraphs.com/90/setlineups?date=%s" % ('2016-07-06'))#today) 
+today = '2016-07-18' #datetime.datetime.today().strftime('%Y-%m-%d')
+url = br.open("https://ottoneu.fangraphs.com/90/setlineups?date=%s" % today) 
 page = url.read()
 soup = BeautifulSoup(page, "html.parser") 
 
 #These are the positions that the script concerns itself with
 lineupPositions = ["C","1B","2B","SS","MI","3B","OF","Util"]
-df = pd.DataFrame(columns=["pos","locked","starting","name","id"]+lineupPositions)
+df = pd.DataFrame(columns=["pos","locked","starting","gamescheduled","name","id"]+lineupPositions)
 
 
 #There's a header bar that gets placed on the page only when you're logged in
@@ -79,7 +79,10 @@ if soup.find(id="team-switcher-menu"):
           if player[1].find('span',{'class':'starting-indicator'}):
             df.loc[player[0],"starting"] = True
           elif player[1].find('span',{'class':'not-starting-indicator'}):
-            df.loc[player[0],"starting"] = False        
+            df.loc[player[0],"starting"] = False
+            
+          if player[1].find_all('td')[3].text == '---': #Opponent is always the 4th column
+            df.loc[player[0],"gamescheduled"] = False
         
           #Determine positional eligibility        
           #In the official javascript, Niv splits the data-player-positions container on / and uses that 
@@ -89,16 +92,26 @@ if soup.find(id="team-switcher-menu"):
 
 
 #After the page has been scraped, you'll need to institute your logic for moving players around
-def movePlayer(date,PlayerID,OldPosition,NewPosition):
+def movePlayer(date,PlayerID,OldPosition,NewPosition,dataframe):
   #The format the server is looking for is an array notation that I can't figure out how to efficiently convert to from a python dictionary
   data = "method=saveChanges&data[Date]=%s&data[Changes][0][PlayerID]=%s&data[Changes][0][OldPosition]=%s&data[Changes][0][NewPosition]=%s" % (date,PlayerID,OldPosition,NewPosition)
   data = urllib.quote(data,safe="=&")
   br.open("https://ottoneu.fangraphs.com/90/ajax/setlineups",data)
+  
+  #Keep the dataframe synched so that logical operations can continue
+  #Bench slots are an imaginary position and there can be an (infinite) number, so add rows as necessary
+  if NewPosition=='Bench':
+    dataframe.loc[dataframe[dataframe['id']==str(PlayerID)].index,'pos'] = 'Bench'
+    dataframe = dataframe.append(pd.Series(), ignore_index=True)
+    dataframe.loc[dataframe.tail(1).index,'pos'] = OldPosition
+  
+  return dataframe
 
-df.loc[0,'starting'] = False
-df.loc[6,'starting'] = False
-df.loc[10,'starting'] = False
 
-#If there's anyone in the starting lineup that's that's not starting, move them
-for index, row in df[(df['pos'].isin(lineupPositions)) & (df['starting']==False) &(df['locked']!=True)].iterrows():
-  movePlayer(today,row['id'],row['pos'],'Bench')
+#df.loc[0,'starting'] = False
+#df.loc[6,'starting'] = False
+#df.loc[10,'starting'] = False
+
+#If there's anyone in the starting lineup, that's not starting (or who doesn't have a game scheduled), and hasn't yet been locked, move them to the bench
+for index, row in df[(df['pos'].isin(lineupPositions)) & (df['locked']!=True) & ((df['starting']==False) | (df['gamescheduled']==False))].iterrows():
+  df = movePlayer(today,row['id'],row['pos'],'Bench',df)
