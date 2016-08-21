@@ -16,7 +16,6 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 import os.path
 
-
 if not (os.path.isfile('auction-profile.csv')):
 
     leagueID = 90 #UZR Friendly
@@ -64,9 +63,35 @@ if not (os.path.isfile('auction-profile.csv')):
     df.to_csv('auction-profile.csv')
 
 else:
-    df = pd.read_csv('auction-profile.csv', index_col=0)
+    df = pd.read_csv('auction-profile.csv', index_col=0, parse_dates=['ended'])
     
 #Analysis of the dataframe
-    tdf = df[(df['ended'] > datetime(2016,3,5)) & (df['winningbid']==True)]
-    cnt_nominatedby = tdf.groupby('nominatedby').link.nunique().sort_values(ascending=False)
-    cnt_wonby = tdf.groupby('team').link.nunique().sort_values(ascending=False)
+tdf = df[(df['ended'] > datetime(2016,3,5)) & (df['winningbid']==True)]
+nominated = tdf.groupby('nominatedby').link.nunique().sort_values(ascending=False)
+won = tdf.groupby('team').link.nunique().sort_values(ascending=False)
+
+nominated.rename('Nominated', inplace=True)
+won.rename('Won', inplace=True)
+
+g = pd.concat([nominated,won], axis=1)
+g.sort_values(by='Nominated', ascending=False, inplace=True)
+
+ind = np.arange(g.shape[0])
+width = .35
+
+plt.rcParams['figure.figsize'] = 12.458, 7.2
+fig, ax = plt.subplots()
+ax.yaxis.grid()
+nominated_ = ax.bar(ind,g.Nominated.values, color='g', width=width)
+won_ = ax.bar(ind+width,g.Won.values, color='r', width=width)
+
+ax.set_ylabel('Team')
+ax.set_title('League %i Auctions Nominated/Won during 2016 to Date' % leagueID)
+ax.set_xticks(ind + width)
+ax.set_xticklabels(g.index.values)
+
+ax.legend((nominated_[0], won_[0]), ('Nominated', 'Won'))
+plt.xticks(rotation=45, horizontalalignment='right')
+
+plt.gcf().tight_layout()
+plt.savefig('League%i_auction-profile.png' % leagueID)
