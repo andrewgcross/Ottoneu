@@ -49,14 +49,14 @@ br["log"] = crd.credentials['user'] #"log" corresponds to the name tag on the fo
 br["pwd"] = crd.credentials['passwd']
 res = br.submit() 
 
-today = '2016-08-10' #datetime.datetime.today().strftime('%Y-%m-%d')
+today = '2016-08-21' #datetime.datetime.today().strftime('%Y-%m-%d')
 url = br.open("https://ottoneu.fangraphs.com/90/setlineups?date=%s" % today) 
 page = url.read()
 soup = BeautifulSoup(page, "html.parser") 
 
 #These are the positions that the script concerns itself with
 lineupPositions = ["C","1B","2B","SS","MI","3B","OF","Util"]
-df = pd.DataFrame(columns=["pos","locked","starting","gamescheduled","name","id"]+lineupPositions)
+df = pd.DataFrame(columns=["pos","locked","starting","gamescheduled","name","id","posCount"]+lineupPositions)
 
 #There's a header bar that gets placed on the page only when you're logged in
 if soup.find(id="team-switcher-menu"):
@@ -86,9 +86,12 @@ if soup.find(id="team-switcher-menu"):
             df.loc[player[0],"gamescheduled"] = False
         
           #Determine positional eligibility        
-          #In the official javascript, Niv splits the data-player-positions container on / and uses that 
+          #In the official javascript, Niv splits the data-player-positions container on / and uses that
+          df.loc[player[0],"posCount"] = 1
           for pos in player[1].find('td',{'data-player-positions':True})['data-player-positions'].split("/"):
             df.loc[player[0],pos] = True
+            df.loc[player[0],"posCount"] = df.loc[player[0],"posCount"] + 1
+          df.loc[player[0],'Util'] = True
 
 
 
@@ -111,7 +114,9 @@ def movePlayer(date,PlayerID,OldPosition,NewPosition):
       #Make sure the spot the player is being moved to is available
       if df[df['pos']==NewPosition]['id'].isnull().values.any(): #lengthy construct due to the fact there are multiple OF slots
         callAjax(date,PlayerID,OldPosition,NewPosition)
-      else:
+        df.loc[df[df['id']==PlayerID].index[0],'pos'] = NewPosition
+        df.loc[df[(df['pos']==NewPosition) & (df['id'].isnull())].index[0],'pos'] = OldPosition
+      else: #this shouldn't be used, as previous logic should be dictating whether a move-to position is already filled or not
         callAjax(date,df[df['pos']==NewPosition].head(1)['id'].values[0],NewPosition,'Bench')        
         callAjax(date,PlayerID,OldPosition,NewPosition) 
 
@@ -121,31 +126,56 @@ def callAjax(date,PlayerID,OldPosition,NewPosition):
   data = urllib.quote(data,safe="=&")
   br.open("https://ottoneu.fangraphs.com/90/ajax/setlineups",data)  
    
-df.loc[2,'starting'] = False
-df.loc[6,'starting'] = False
-df.loc[10,'starting'] = False
+#df.loc[2,'starting'] = False
+#df.loc[6,'starting'] = False
+#df.loc[10,'starting'] = False
 
 #If there's anyone in the starting lineup, that's not starting (or who doesn't have a game scheduled), and hasn't yet been locked, move them to the bench
 for index, row in df[(df['pos'].isin(lineupPositions)) & (df['locked']!=True) & (~df['name'].isnull()) & ((df['starting']==False) | (df['gamescheduled']==False))].iterrows():
   movePlayer(today,row['id'],row['pos'],'Bench')
   
-#Move players from the bench into the starting lineup
+#Move players into the starting lineup
 #First determine which slots need to be filled
 fill = df[df['pos'].isin(lineupPositions) & df['id'].isnull()]['pos']
 
-#Can't use a pandas query select statement since the 1B, 2B, 3B aren't valid python expressions (they start with a numeral)
-#http://stackoverflow.com/questions/27787264/pandas-query-throws-error-when-column-name-starts-with-a-number
-first = True
-for need in fill.unique():
-    if first:
-        first = False
-        filt = "df['%s']" % need
+while True: 
+  #Can't use a pandas query select statement since the 1B, 2B, 3B aren't valid python expressions (they start with a numeral)
+  #http://stackoverflow.com/questions/27787264/pandas-query-throws-error-when-column-name-starts-with-a-number
+  first = True
+  for need in fill.unique():
+      if first:
+          first = False
+          filt = "(df['%s']==True)" % need
+      else:
+          filt = filt + " | (df['%s']==True)" % need
+  
+  #These are the bench players that can fill empty roster spots
+  #available = df[(df['pos']=='Bench') & ~(df['starting']==False) & ~(df['gamescheduled']==False) & ~(df['locked']==True) & (eval(filt))]
+  available = df[(df['pos'].isin(lineupPositions+['Bench'])) & ~(df['starting']==False) & ~(df['gamescheduled']==False) & ~(df['locked']==True) & (eval(filt))]
+  
+  if not available.empty:
+    #Move the eligible players into the needed spot, but make sure to identify when there's no further moving around possible
+    pos = available.count()[fill.unique()].sort_values().index[0]
+    if available.count()[pos]: #very real possibility there won't be any available players to fill in the needs
+      
+      #Someone taking up the utility spot shoud be the first person moved      
+      if len(available[(available[pos]==True) & (available['pos']=='Util')]):
+        movePlayer(today,available[available['pos']=='Util']['id'].values[0],'Util',pos)
+        fill = fill.drop(fill[fill==pos].head(1).index)
+        fill = fill.append(pd.Series(['Util']))
+      elif len(available[(available[pos]==True) & (available['pos']!=pos)]):
+
+        #this is where advanced logic will be placed to pick you exactly should be moved into a slot        
+        if pos=='Util':
+          tomove = available[(available['pos']=='Bench')].sort_values('posCount').head(1)
+        else:
+          tomove = available[(available[pos]==True) & (available['pos']!=pos)].sort_values(by=['pos','posCount'], ascending=[False,True]).head(1)
+        movePlayer(today,tomove['id'].values[0],tomove['pos'].values[0],pos)
+        fill=fill.drop(fill[fill==pos].head(1).index)
     else:
-        filt = filt + " | df['%s']" % need
-
-#These are the bench players that can fill empty roster spots
-available = df[(df['pos']=='Bench') & ~(df['starting']==False) & ~(df['gamescheduled']==False) & ~(df['locked']==True) & (eval(filt))]
-
-if not available.empty and fill.size:
-  #Move the eligible players into the needed spot, but make sure to identify when there's no further moving around possible
-  available.count()[fill.unique()]
+      fill=fill.drop(fill[fill==pos].head(1).index)
+  else:
+    break
+  
+  if len(fill)==0:
+    break
