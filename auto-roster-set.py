@@ -9,7 +9,7 @@ After entering your login credentials, and establishing the lineup you'd like to
 prioritize, this script can be run to set your lineup depending on which players
 are starting. It's best run automatically with a CHRON job.
 
-The script will only consider benched position players as being available to be moved into a starting slot
+Made to be compatible with pandas 14.1-2
 """
 
 import cookielib 
@@ -158,7 +158,7 @@ if soup.find(id="team-switcher-menu"):
     
     if not available.empty:
       #Move the eligible players into the needed spot, but make sure to identify when there's no further moving around possible
-      pos = available.count()[fill.unique()].sort_values().index[0]
+      pos = available.count()[fill.unique()].order(ascending=True).index[0]
       if available.count()[pos]: #very real possibility there won't be any available players to fill in the needs
         
         #Someone taking up the utility spot shoud be the first person moved      
@@ -170,9 +170,9 @@ if soup.find(id="team-switcher-menu"):
   
           #this is where advanced logic will be placed to pick you exactly should be moved into a slot        
           if pos=='Util':
-            tomove = available[(available['pos']=='Bench')].sort_values('posCount').head(1)
+            tomove = available[(available['pos']=='Bench')].sort('posCount').head(1)
           else:
-            tomove = available[(available[pos]==True) & (available['pos']!=pos)].sort_values(by=['pos','posCount'], ascending=[False,True]).head(1)
+            tomove = available[(available[pos]==True) & (available['pos']!=pos)].sort(columns=['pos','posCount'], ascending=[False,True]).head(1)
           movePlayer(today,tomove['id'].values[0],tomove['pos'].values[0],pos)
           fill=fill.drop(fill[fill==pos].head(1).index)
       else:
