@@ -169,16 +169,13 @@ if soup.find(id="team-switcher-menu"):
         elif len(available[(available[pos]==True) & (available['pos']!=pos)]):
   
           #this is where advanced logic will be placed to pick you exactly should be moved into a slot        
-          if pos=='Util':
+          if pos in ['Util','MI']:
             tomove = available[(available['pos']=='Bench')].sort('posCount').head(1)
           else:
             tomove = available[(available[pos]==True) & (available['pos']!=pos)].sort(columns=['pos','posCount'], ascending=[False,True]).head(1)
           movePlayer(today,tomove['id'].values[0],tomove['pos'].values[0],pos)
-          fill=fill.drop(fill[fill==pos].head(1).index)
-      else:
-        fill=fill.drop(fill[fill==pos].head(1).index)
-    else:
-      break
+
+    fill=fill.drop(fill[fill==pos].head(1).index)
     
     if len(fill)==0:
       break
