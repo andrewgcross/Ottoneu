@@ -19,6 +19,7 @@ import mechanize
 from bs4 import BeautifulSoup
 import datetime
 import pandas as pd
+import numpy as np
 import credentials as crd
 
 def movePlayer(date,PlayerID,OldPosition,NewPosition):
@@ -47,7 +48,7 @@ def movePlayer(date,PlayerID,OldPosition,NewPosition):
         
   print "%s -> %s, %s" % (OldPosition, NewPosition, df[df['id']==PlayerID]['name'].values[0])
 
-def callAjax(date,PlayerID,OldPosition,NewPosition):  
+def callAjax(date,PlayerID,OldPosition,NewPosition): 
   #The format the server is looking for is an array notation that I can't figure out how to efficiently convert to from a python dictionary
   data = "method=saveChanges&data[Date]=%s&data[Changes][0][PlayerID]=%s&data[Changes][0][OldPosition]=%s&data[Changes][0][NewPosition]=%s" % (date,PlayerID,OldPosition,NewPosition)
   data = urllib.quote(data,safe="=&")
@@ -80,13 +81,25 @@ br["log"] = crd.credentials['user'] #"log" corresponds to the name tag on the fo
 br["pwd"] = crd.credentials['passwd']
 res = br.submit() 
 
-today = datetime.datetime.today().strftime('%Y-%m-%d') #'2016-08-21'
+#Prior to the 2017 season starting, the date requirement for the AJAX call is hardcoded to 2017-04-02
+if datetime.datetime.today() < datetime.datetime(2017,4,2):
+  today = '2017-04-02'
+else:
+  today = datetime.datetime.today().strftime('%Y-%m-%d') #'2016-08-21'
+
 url = br.open("https://ottoneu.fangraphs.com/90/setlineups?date=%s" % today) 
 page = url.read()
 soup = BeautifulSoup(page, "html.parser") 
 
 #These are the positions that the script concerns itself with
-lineupPositions = ["C","1B","2B","SS","MI","3B","OF","Util"]
+lineupPositions = ["C","1B","2B","SS","3B","OF","MI","Util"]
+
+#Build a dictionary that relates the above positions to integers that can later be sorted
+lineupPriority = zip(lineupPositions,range(len(lineupPositions)))
+priority = {}
+for position, rank in lineupPriority:
+  priority[position] = rank
+
 df = pd.DataFrame(columns=["pos","locked","starting","gamescheduled","name","id","posCount"]+lineupPositions)
 
 #There's a header bar that gets placed on the page only when you're logged in
@@ -138,9 +151,10 @@ if soup.find(id="team-switcher-menu"):
     movePlayer(today,row['id'],row['pos'],'Bench')    
   
   #Move players into the starting lineup
-  #First determine which slots need to be filled
+  #Determine which slots need to be filled, in the order specified by the lineupPositions variable above
   fill = df[df['pos'].isin(lineupPositions) & df['id'].isnull()]['pos']
   
+  resolved = []
   while True: 
     #Can't use a pandas query select statement since the 1B, 2B, 3B aren't valid python expressions (they start with a numeral)
     #http://stackoverflow.com/questions/27787264/pandas-query-throws-error-when-column-name-starts-with-a-number
@@ -148,13 +162,20 @@ if soup.find(id="team-switcher-menu"):
     for need in fill.unique():
         if first:
             first = False
-            filt = "(df['%s']==True)" % need
+            filt = "((df['%s']==True)" % need
         else:
             filt = filt + " | (df['%s']==True)" % need
     
-    #These are the bench players that can fill empty roster spots
-    #available = df[(df['pos']=='Bench') & ~(df['starting']==False) & ~(df['gamescheduled']==False) & ~(df['locked']==True) & (eval(filt))]
-    available = df[(df['pos'].isin(lineupPositions+['Bench'])) & ~(df['starting']==False) & ~(df['gamescheduled']==False) & ~(df['locked']==True) & (eval(filt))]
+    filt = filt + ")" #the OR statements above need to be all grouped together
+    
+    #Since the order by which players are assigned positions is based on "rarity", one a more "rare" position has been filled (C, for example)
+    #you don't want to use that person to fill an OF slot, so exclude them from being available
+    if len(resolved):
+      for resolve in resolved:
+          filt = filt + " & (df['pos']!='%s')" % resolve
+          
+    #These are the players available to fill empty roster spots
+    available = df[(df['pos'].isin(lineupPositions+['Bench'])) & (df['starting']!=False) & (df['gamescheduled']!=False) & (df['locked']!=True) & eval(filt)]
     
     if not available.empty:
       #Move the eligible players into the needed spot, but make sure to identify when there's no further moving around possible
@@ -168,13 +189,25 @@ if soup.find(id="team-switcher-menu"):
           fill = fill.append(pd.Series(['Util']))
         elif len(available[(available[pos]==True) & (available['pos']!=pos)]):
   
-          #this is where advanced logic will be placed to pick you exactly should be moved into a slot        
-          if pos in ['Util','MI']:
-            tomove = available[(available['pos']=='Bench')].sort('posCount').head(1)
+          #this is where advanced logic will be placed to pick who exactly should be moved into a slot
+          #Don't fill a flex spot (UTIL or MI) with someone that's already in a rigid lineup position
+          if pos in ['Util']:
+            if not available[(available['pos']=='Bench')].empty:
+              tomove = available[(available['pos']=='Bench')].sort('posCount').head(1)
+              movePlayer(today,tomove['id'].values[0],tomove['pos'].values[0],pos)
+          #elif pos in ['MI']:
+            #tomove = available[(available[pos]==True) & (available['pos']!=pos)].sort(columns=['pos','posCount'], ascending=[False,True]).head(1)
           else:
             tomove = available[(available[pos]==True) & (available['pos']!=pos)].sort(columns=['pos','posCount'], ascending=[False,True]).head(1)
-          movePlayer(today,tomove['id'].values[0],tomove['pos'].values[0],pos)
+            
+            if tomove['pos'].isin(lineupPositions).values[0]: #if you take a guy out of the lineup to fill a more "rare" position, be sure to try ot backfill his position
+              fill = fill.append(pd.Series([tomove['pos'].values[0]]))
+              
+            movePlayer(today,tomove['id'].values[0],tomove['pos'].values[0],pos)
+    else:
+      break
 
+    resolved.extend([pos])
     fill=fill.drop(fill[fill==pos].head(1).index)
     
     if len(fill)==0:
