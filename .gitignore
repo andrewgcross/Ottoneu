@@ -1,7 +1,5 @@
-credentials.py
-credentials.pyc
-auction-profile.csv
-last10.csv
+.env
+.notes
 
 # OS generated files #
 ######################
