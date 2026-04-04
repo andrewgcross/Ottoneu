@@ -162,18 +162,20 @@ if soup.find(id="team-switcher-menu"):
           if facing_span:
             player_data["facing"] = facing_span.text.strip()
 
-        # --- STARTING LOGIC ---
+        # --- STARTING & BATTING LOGIC ---
         player_data["starting"] = None
         player_data["batting"] = None
 
-        if row.find('span', {'class': 'starting-indicator'}):
+        # 1. Check if they are explicitly starting (ignores the HTML tag type)
+        if row.select_one('.starting-indicator'):
           player_data["starting"] = True
 
           sr_span = row.select_one('.lineup-game-info .sr-only')
           if sr_span:
             player_data["batting"] = int(sr_span.text.split()[-1])
 
-        elif row.find('span', {'class': 'not-starting-indicator'}):
+        # 2. Check if they are explicitly NOT starting (ignores the <i> tag issue)
+        elif row.select_one('.not-starting-indicator'):
           player_data["starting"] = False
       
         #Determine positional eligibility        
