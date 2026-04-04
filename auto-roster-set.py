@@ -133,57 +133,68 @@ if soup.find(id="team-switcher-menu"):
     
   table = soup.find('table', attrs={'class':'lineup-table batter'}) #Only mess with batters
   players = table.select('tbody tr') #Grab the rows
-  
-  for player in enumerate(players):
+
+  parsed_players = []
+
+  for index, row in enumerate(players):
     
-    if not player[1].find(True,{"style":True}): #there's a table row between the starts and the bench that doesn't include any player info, and simply seperates the two sections
-    
-      df.loc[player[0],"pos"] = player[1].find('td',{'data-position':True}).text #position
-      
-      if player[1].find(True,{'class':'locked'}):
-        df.loc[player[0],"locked"] = True
-        
-      if player[1].find('td',{'class':'player-name'}).text != 'Empty': #if there's someone assigned to the slot
-        df.loc[player[0],"name"] = player[1].find('td',{'class':'player-name'}).a.text
-        df.loc[player[0],"id"] = int(player[1].find('td',{'data-player-id':True})['data-player-id'])
-      
-        if player[1].find('span',{'class':'starting-indicator'}):
-          df.loc[player[0],"starting"] = True
-        elif player[1].find('span',{'class':'not-starting-indicator'}):
-          df.loc[player[0],"starting"] = False
-          
-        if player[1].find_all('td')[2].text.strip() == '---': #Opponent is the 3rd column
-          df.loc[player[0],"gamescheduled"] = False
-        else:
-          df.loc[player[0], "gamescheduled"] = True
+    if not row.find(True,{"style":True}): #there's a table row between the starts and the bench that doesn't include any player info, and simply seperates the two sections
+
+      player_data = {}
+      player_data = {
+        "pos": row.find('td', {'data-position': True}).get('data-position'),
+        "locked": bool(row.find(True,{'class':'locked'}))
+      }
+
+      name_cell = row.find('td', {'class': 'player-name'})
+
+      if name_cell and name_cell.a: #If there's a link, it will be to a player, thus there is a player in the row
+        player_data["name"] = name_cell.a.text
+        player_data["id"] = int(row.find('td', {'data-player-id': True})['data-player-id'])
+        player_data["handedness"] = row.select_one('.lineup-player-bio .strong.tinytext').text.split()[-1].strip()
+
+        # --- GAME SCHEDULED LOGIC ---
+        player_data["gamescheduled"] = row.find('span', {'class': 'lineup-game-info'}).text.strip() != '---'
+
+        player_data["facing"] = None
+        if player_data["gamescheduled"]:
+          facing_span = row.select_one('.lineup-opponent-info .tinytext')
+          if facing_span:
+            player_data["facing"] = facing_span.text.strip()
+
+        # --- STARTING LOGIC ---
+        player_data["starting"] = None
+        player_data["batting"] = None
+
+        if row.find('span', {'class': 'starting-indicator'}):
+          player_data["starting"] = True
+
+          sr_span = row.select_one('.lineup-game-info .sr-only')
+          if sr_span:
+            player_data["batting"] = int(sr_span.text.split()[-1])
+
+        elif row.find('span', {'class': 'not-starting-indicator'}):
+          player_data["starting"] = False
       
         #Determine positional eligibility        
         #In the official JavaScript, Niv splits the data-player-positions container on / and uses that
-        df.loc[player[0],"posCount"] = 1
-        for pos in player[1].find('td',{'data-player-positions':True})['data-player-positions'].split("/"):
-          df.loc[player[0],pos] = True
-          if pos in ["SS","2B"]:
-            df.loc[player[0],"MI"] = True
-            df.loc[player[0],"posCount"] = df.loc[player[0],"posCount"] + 1
+        player_data["posCount"] = 0
+        positions = row.find('td', {'data-player-positions': True})['data-player-positions'].split("/")
 
-          df.loc[player[0],"posCount"] = df.loc[player[0],"posCount"] + 1
-        df.loc[player[0],'Util'] = True
+        for p in positions:
+          player_data[p] = True
+          player_data["posCount"] += 1
 
-  # --- Resolve NaN values for logical filtering ---
-  # If a player isn't explicitly locked, they are unlocked (False)
-  #df['locked'] = df['locked'].fillna(False)
+        if "2B" in positions or "SS" in positions:
+          player_data["MI"] = True
+          player_data["posCount"] += 1
 
-  # If there is no starting indicator, treat them as not starting (False)
-  #df['starting'] = df['starting'].fillna(False)
+        player_data['Util'] = True
 
-  # If the opponent column wasn't '---', it means they DO have a game (True)
-  #df['gamescheduled'] = df['gamescheduled'].fillna(True)
-  
-  #Testing purposes
-  #df.loc[4,'starting'] = False
-  #df.loc[6,'starting'] = False
-  #df.loc[10,'starting'] = False
-  
+      parsed_players.append(player_data)
+
+  df = pd.DataFrame(parsed_players)
+
   #If there's anyone in the starting lineup, that's not starting (or who doesn't have a game scheduled), and hasn't yet been locked, move them to the bench
   for index, row in df[(df['pos'].isin(lineupPositions)) & (df['locked']!=True) & (~df['name'].isnull()) & ((df['starting']!=True) | (df['gamescheduled']!=True))].iterrows():
     moveplayer(today,row['id'],row['pos'],'Bench')
