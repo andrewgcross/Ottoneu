@@ -1,4 +1,5 @@
 import os
+import json
 
 
 def create_env_file():
@@ -17,8 +18,13 @@ def create_env_file():
             f.write(f"TEAM_ID={team}\n")
         if target_date:
             f.write(f"TARGET_DATE={target_date}\n")
+        f.write(f"HOT_OFFENSE_WEEKS=3\n")
+
+    with open("hot_offenses.json", "w") as f:
+        json.dump({}, f)
 
     print("\nSuccessfully created .env file!")
+    print("Created empty hot_offenses.json")
     print("Make sure '.env' is listed in your .gitignore file to stay secure.")
 
 if __name__ == "__main__":

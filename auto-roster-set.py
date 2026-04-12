@@ -20,6 +20,8 @@ import pandas as pd
 from dotenv import load_dotenv
 from typing import Any, cast
 import os
+import json
+from return_hot_offenses import return_hot_offenses
 
 # This loads the variables from the .env file into the system environment
 load_dotenv()
@@ -448,6 +450,19 @@ if soup.find(id="team-switcher-menu"):
 
   df_pitchers = pd.DataFrame(parsed_pitchers, columns=pd.Index(["id", "pos", "locked", "gamescheduled", "Name", "SP", "RP", "Starting", "Following", "Location", "Opponent", "Start Time", "P/IP"] + pc_cols))
 
+  # Load today's hot-offense teams; fetch from FanGraphs if not yet cached for today
+  try:
+    with open('hot_offenses.json', 'r') as f:
+      hot_offenses_data = json.load(f)
+  except (FileNotFoundError, json.JSONDecodeError):
+    hot_offenses_data = {}
+
+  if today not in hot_offenses_data:
+    print("Hot offense data not cached for today — fetching from FanGraphs...")
+    hot_offense_teams = return_hot_offenses()
+  else:
+    hot_offense_teams = hot_offenses_data[today]
+
   # --- Bench out pitchers in the wrong slot ---
 
   # SP slot: bench anyone not confirmed as today's starter (not-starting, followers, no-game)
@@ -481,7 +496,8 @@ if soup.find(id="team-switcher-menu"):
       (df_pitchers['Starting'] == True) &
       (df_pitchers['gamescheduled'] == True) &
       ~df_pitchers['locked'] &
-      (df_pitchers['pos'] == 'Bench')
+      (df_pitchers['pos'] == 'Bench') &
+      ~df_pitchers['Opponent'].isin(hot_offense_teams)
     ]
     if sp_candidates.empty:
       break
