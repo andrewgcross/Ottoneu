@@ -14,10 +14,11 @@ Optimized for Python 3.9.25 to be compatible with my Synology environment
 """
 
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 import datetime
 import pandas as pd
 from dotenv import load_dotenv
+from typing import Any, cast
 import os
 
 # This loads the variables from the .env file into the system environment
@@ -38,14 +39,38 @@ _TZ_OFFSETS = {
     'EST': -5, 'CST': -6, 'MST': -7, 'PST': -8,
 }
 
+# Span classes whose text should be excluded from game info (indicators and screen-reader labels)
+_EXCLUDED_SPAN_CLASSES = {'starting-indicator', 'not-starting-indicator', 'following-indicator', 'sr-only'}
+
+def get_game_info_text(span: Tag) -> str:
+    """Extract the game info string from a .lineup-game-info span.
+
+    After a game starts, the time moves inside an <a> element, so .text alone
+    mixes in indicator/sr-only text and misses the link text.  This walks the
+    span's children directly: it skips indicator and sr-only spans, collects
+    direct text nodes and <a> link text, then normalises whitespace (including
+    non-breaking spaces from &nbsp;).
+    """
+    chunks = []
+    for child in span.children:
+        if isinstance(child, Tag):
+            child_classes = set(child.get('class') or [])
+            if not child_classes & _EXCLUDED_SPAN_CLASSES:
+                chunks.append(child.get_text())
+        else:
+            chunks.append(str(child))
+    return ' '.join(''.join(chunks).replace('\xa0', ' ').split())
+
 def parse_start_time(time_str, date_str):
     """Parse a time string like '4:15 PM PDT' into a timezone-aware datetime.
     Combining with date_str (YYYY-MM-DD) makes the result sortable across timezones."""
-    parts = time_str.rsplit(' ', 1)  # ['4:15 PM', 'PDT']
-    if len(parts) != 2:
-        return None
-    time_part, tz_abbr = parts
-    offset_hours = _TZ_OFFSETS.get(tz_abbr, 0)
+    time_parts = time_str.rsplit(' ', 1)  # ['4:15 PM', 'PDT'] or ['4:15 PM'] if no tz
+    if len(time_parts) == 2 and time_parts[1] in _TZ_OFFSETS:
+        time_part, tz_abbr = time_parts
+        offset_hours = _TZ_OFFSETS[tz_abbr]
+    else:
+        time_part = time_str  # no recognised timezone — parse as-is, treat as UTC
+        offset_hours = 0
     tz = datetime.timezone(datetime.timedelta(hours=offset_hours))
     try:
         naive = datetime.datetime.strptime(f"{date_str} {time_part}", '%Y-%m-%d %I:%M %p')
@@ -76,7 +101,7 @@ def moveplayer(date,player_id,position_old,position_new):
 
 def callajax(date, player_id, position_old, position_new):
   # Constructing the exact payload the FanGraphs API now expects
-  payload = {
+  ajax_payload = {
     "method": "saveChanges",
     "data[Date]": date,
     "data[Changes][0][PlayerID]": player_id,
@@ -96,11 +121,11 @@ def callajax(date, player_id, position_old, position_new):
   url = f"https://ottoneu.fangraphs.com/{league_id}/ajax/setlineups"
 
   print(f"Executing move: {position_old} -> {position_new} for Player ID {player_id}")
-  response = session.post(url, data=payload, headers=headers)
+  ajax_response = session.post(url, data=ajax_payload, headers=headers)
 
   # Quick error check to ensure the post didn't bounce
-  if response.status_code != 200:
-    print(f"Warning: Move failed with status code {response.status_code}. Response: {response.text}")
+  if ajax_response.status_code != 200:
+    print(f"Warning: Move failed with status code {ajax_response.status_code}. Response: {ajax_response.text}")
 
 
 # --- Authentication ---
@@ -114,12 +139,14 @@ soup_login = BeautifulSoup(get_response.text, "html.parser")
 payload = {}
 login_form = soup_login.find('form', id='loginform')
 
-if login_form:
+if isinstance(login_form, Tag):
     for input_tag in login_form.find_all('input', type='hidden'):
+        if not isinstance(input_tag, Tag):
+            continue
         name = input_tag.get('name')
         value = input_tag.get('value')
         if name:
-            payload[name] = value
+            payload[str(name)] = value
 
 # Inject your credentials and redirect preferences into the payload
 payload["log"] = os.getenv("OTTONEU_USERNAME")
@@ -152,7 +179,7 @@ lineupPositions = ["C","1B","2B","SS","3B","OF","MI","Util"]
 #Build a dictionary that relates the above positions to integers that can later be sorted
 priority = {position: rank for rank, position in enumerate(lineupPositions)}
 
-df = pd.DataFrame(columns=["pos","locked","starting","gamescheduled","name","id","posCount"]+lineupPositions)
+df = pd.DataFrame(columns=pd.Index(["pos","locked","starting","gamescheduled","name","id","posCount"]+lineupPositions))
 
 #There's a header bar that gets placed on the page only when you're logged in
 if soup.find(id="team-switcher-menu"):
@@ -160,14 +187,14 @@ if soup.find(id="team-switcher-menu"):
   batter_table = soup.find('table', attrs={'class': 'lineup-table batter'})
   parsed_players = []
 
-  if batter_table:
+  if isinstance(batter_table, Tag):
     for row in batter_table.select('tbody tr'):
 
       if row.find(True, {"style": True}):  # skip separator rows
         continue
 
       pos_td = row.find('td', {'data-position': True})
-      if not pos_td:
+      if not isinstance(pos_td, Tag):
         continue
 
       pos = pos_td.get('data-position')
@@ -176,24 +203,28 @@ if soup.find(id="team-switcher-menu"):
 
       player_data = {
         "pos": pos,
-        "locked": bool(row.find(True, {'class': 'locked'})),
+        "locked": 'locked' in (pos_td.get('class') or []),
         "name": None, "id": None, "handedness": None,
         "gamescheduled": False, "location": None, "start_time": None,
         "facing": None, "starting": None, "batting": None, "posCount": 0,
       }
 
       name_cell = row.find('td', {'class': 'player-name'})
-      if not (name_cell and name_cell.a):
+      if not isinstance(name_cell, Tag) or 'empty_slot' in (name_cell.get('class') or []):
         parsed_players.append(player_data)
         continue
 
-      player_data["name"] = name_cell.a.text.strip()
-      player_data["id"] = int(row.find('td', {'data-player-id': True})['data-player-id'])
-      player_data["handedness"] = row.select_one('.lineup-player-bio .strong.tinytext').text.split()[-1].strip()
+      player_data["name"] = name_cell.a.text.strip() if name_cell.a else None
+      player_id_raw = pos_td.get('data-player-id')
+      if player_id_raw:
+        player_data["id"] = int(str(player_id_raw))
+      bio_span = row.select_one('.lineup-player-bio .strong.tinytext')
+      if bio_span:
+        player_data["handedness"] = bio_span.text.split()[-1].strip()
 
       # Game info — parsed from e.g. "@ATL 4:15 PM PDT" or "ATL 7:05 PM EDT"
       game_info_span = row.find('span', {'class': 'lineup-game-info'})
-      game_info_text = game_info_span.text.strip() if game_info_span else '---'
+      game_info_text = get_game_info_text(game_info_span) if isinstance(game_info_span, Tag) else '---'
       player_data["gamescheduled"] = game_info_text != '---'
       if game_info_text != '---':
         player_data["location"] = "AWAY" if game_info_text.startswith('@') else "HOME"
@@ -215,9 +246,9 @@ if soup.find(id="team-switcher-menu"):
         player_data["starting"] = False
 
       # Positional eligibility — Niv splits data-player-positions on / in the official JS
-      positions_td = row.find('td', {'data-player-positions': True})
-      if positions_td:
-        positions = positions_td['data-player-positions'].split("/")
+      positions_raw = pos_td.get('data-player-positions')
+      if positions_raw:
+        positions = str(positions_raw).split("/")
         for p in positions:
           player_data[p] = True
           player_data["posCount"] += 1
@@ -234,18 +265,38 @@ if soup.find(id="team-switcher-menu"):
   for index, row in df[df['id'].notna()].query("pos in @lineupPositions and not locked and (not gamescheduled or starting == False)").iterrows():
     moveplayer(today, row['id'], row['pos'], 'Bench')
   
-  #Move players into the starting lineup
-  #Determine which slots need to be filled, in the order specified by the lineupPositions variable above
-  fill = df[df['pos'].isin(lineupPositions) & df['id'].isnull()]['pos']
-  
-  resolved = []
-  while True: 
-    needs = fill.unique()
+  # --- Fill starting lineup slots ---
 
-    # eligible: player can fill at least one of the still-needed positions
-    # not_resolved: exclude players already sitting in a position that has been filled,
-    #               so a rare-position player (e.g. C) isn't reused to fill OF
-    eligible = df[needs].any(axis='columns')
+  # Flex positions that must wait until their primary counterparts are resolved first
+  FLEX_PREREQS = {'MI': {'SS', '2B'}, 'Util': set(lineupPositions) - {'MI', 'Util'}}
+
+  def matchup_is_favorable(hand, facing):
+    """True when the batter has a platoon advantage against the opposing pitcher."""
+    if pd.isna(hand) or pd.isna(facing):
+      return False
+    if hand == 'S':
+      return True  # switch hitters always have a platoon advantage
+    # facing is the raw value from .tinytext: 'R' or 'L'
+    pitcher_hand = facing if facing in ('R', 'L') else None
+    return hand != pitcher_hand if pitcher_hand else False
+
+  fill: pd.Series = df[df['pos'].isin(lineupPositions) & df['id'].isnull()]['pos']
+  resolved = []
+
+  while not fill.empty:
+    needs = set(fill.unique())
+
+    # Defer flex slots until their primary positions are resolved (or proven unfillable)
+    deferred = {flex for flex, prereqs in FLEX_PREREQS.items() if flex in needs and needs & prereqs}
+    active_needs = [p for p in lineupPositions if p in needs - deferred]
+    if not active_needs:  # only deferred slots remain — attempt them anyway
+      active_needs = [p for p in lineupPositions if p in needs]
+
+    eligible_cols = [p for p in active_needs if p in df.columns]
+    if not eligible_cols:
+      break
+
+    eligible = df[eligible_cols].any(axis='columns')
 
     available = df[
       df['pos'].isin(lineupPositions + ['Bench']) &
@@ -255,42 +306,57 @@ if soup.find(id="team-switcher-menu"):
       eligible &
       ~df['pos'].isin(resolved)
     ]
-    
-    if not available.empty:
-      #Move the eligible players into the needed spot, but make sure to identify when there's no further moving around possible
-      counts = available.count()[fill.unique()].sort_values(ascending=True)
-      pos = counts.index[0]
 
-      if counts[pos]: #very real possibility there won't be any available players to fill in the needs
-        
-        #Someone taking up the utility spot should be the first person moved
-        if len(available[(available[pos]==True) & (available['pos']=='Util')]):
-          moveplayer(today,available[available['pos']=='Util']['id'].values[0],'Util',pos)
-          fill = fill.drop(fill[fill==pos].head(1).index)
-          fill = pd.concat([fill, pd.Series(['Util'])], ignore_index=True)
-
-        elif len(available[(available[pos]==True) & (available['pos']!=pos)]):
-          #this is where advanced logic will be placed to pick who exactly should be moved into a slot
-          #Don't fill a flex spot (UTIL or MI) with someone that's already in a rigid lineup position
-          if pos in ['Util']:
-            if not available[(available['pos']=='Bench')].empty:
-              tomove = available[(available['pos']=='Bench')].sort_values('posCount').head(1)
-              moveplayer(today,tomove['id'].values[0],tomove['pos'].values[0],pos)
-          else:
-            tomove = available[(available[pos]==True) & (available['pos']!=pos)].sort_values(by=['pos','posCount'], ascending=[False,True]).head(1)
-            
-            if tomove['pos'].isin(lineupPositions).values[0]: #if you take a guy out of the lineup to fill a more "rare" position, be sure to try ot backfill his position
-              fill = pd.concat([fill, pd.Series([tomove['pos'].values[0]])], ignore_index=True)
-              
-            moveplayer(today,tomove['id'].values[0],tomove['pos'].values[0],pos)
-    else:
+    if available.empty:
       break
 
-    resolved.extend([pos])
-    fill=fill.drop(fill[fill==pos].head(1).index)
-    
-    if len(fill)==0:
+    # Scarcity heuristic: fill the position with fewest eligible candidates first
+    counts = available[eligible_cols].sum()
+    counts = counts[counts > 0]
+    if counts.empty:
       break
+    pos = counts.idxmin()
+
+    # Candidates: eligible for pos, not already occupying it
+    candidates = available[(available[pos] == True) & (available['pos'] != pos)].copy()
+
+    if candidates.empty:
+      resolved.append(pos)
+      fill = cast(pd.Series, fill.drop(fill[fill == pos].head(1).index))
+      continue
+
+    # Player selection priority:
+    # 1. Util occupant first — moving them frees the flex slot for a bench player
+    # 2. Bench before other lineup positions
+    # 3. Batting order ascending (1 is highest priority), unknown batting order last
+    # 4. Platoon advantage as final tiebreaker
+    candidates['_source'] = candidates['pos'].map(
+      lambda slot: 0 if slot == 'Util' else (1 if slot == 'Bench' else 2)
+    )
+    candidates['_favorable'] = candidates.apply(
+      lambda r: matchup_is_favorable(r.get('handedness'), r.get('facing')), axis=1
+    )
+    candidates = candidates.sort_values(
+      by=['_source', 'batting', '_favorable'],
+      ascending=[True, True, False],
+      na_position='last'
+    )
+
+    tomove = candidates.iloc[0]
+    from_pos = tomove['pos']
+
+    if from_pos == 'Util':
+      # Util opens up — swap it into fill in place of pos
+      fill = cast(pd.Series, fill.drop(fill[fill == pos].head(1).index))
+      fill = pd.concat([fill, pd.Series(['Util'])], ignore_index=True)
+    elif from_pos in lineupPositions:
+      # Pulling from another lineup slot — backfill that position
+      fill = pd.concat([fill, pd.Series([from_pos])], ignore_index=True)
+
+    moveplayer(today, tomove['id'], from_pos, pos)
+
+    resolved.append(pos)
+    fill = cast(pd.Series, fill.drop(fill[fill == pos].head(1).index))
     
   # --- Pitcher Table ---
   pitcherPositions = ["SP", "RP"]
@@ -300,38 +366,43 @@ if soup.find(id="team-switcher-menu"):
   pitcher_table = soup.find('table', attrs={'class': 'lineup-table pitcher'})
   parsed_pitchers = []
 
-  if pitcher_table:
+  if isinstance(pitcher_table, Tag):
     for row in pitcher_table.select('tbody tr'):
 
       if row.find(True, {"style": True}):  # skip separator rows (same pattern as batter table)
         continue
 
       pos_td = row.find('td', {'data-position': True})
-      if not pos_td:
+      if not isinstance(pos_td, Tag):
         continue
 
       pos = pos_td.get('data-position')
       if pos not in pitcherPositions + ['Bench']:
         continue
 
-      pitcher_data = {col: None for col in ["pos", "Name", "SP", "RP", "Starting", "Following", "Location", "Opponent", "Start Time"] + pc_cols}
+      pitcher_data: dict[str, Any] = {col: None for col in ["id", "pos", "locked", "gamescheduled", "Name", "SP", "RP", "Starting", "Following", "Location", "Opponent", "Start Time", "P/IP"] + pc_cols}
       pitcher_data["pos"] = pos
+      pitcher_data["locked"] = 'locked' in (pos_td.get('class') or [])
       pitcher_data["SP"] = False
       pitcher_data["RP"] = False
       pitcher_data["Starting"] = False
       pitcher_data["Following"] = False
+      pitcher_data["gamescheduled"] = False
 
       name_cell = row.find('td', {'class': 'player-name'})
-      if not (name_cell and name_cell.a):
+      if not isinstance(name_cell, Tag) or 'empty_slot' in (name_cell.get('class') or []):
         parsed_pitchers.append(pitcher_data)
         continue
 
-      pitcher_data["Name"] = name_cell.a.text.strip()
+      pitcher_data["Name"] = name_cell.a.text.strip() if name_cell.a else None
+      player_id_raw = pos_td.get('data-player-id')
+      if player_id_raw:
+        pitcher_data["id"] = int(str(player_id_raw))
 
       # Positional eligibility (SP / RP)
-      positions_td = row.find('td', {'data-player-positions': True})
-      if positions_td:
-        for p in positions_td['data-player-positions'].split("/"):
+      positions_raw = pos_td.get('data-player-positions')
+      if positions_raw:
+        for p in str(positions_raw).split("/"):
           if p in ["SP", "RP"]:
             pitcher_data[p] = True
 
@@ -344,9 +415,10 @@ if soup.find(id="team-switcher-menu"):
       if row.select_one('.following-indicator'):
         pitcher_data["Following"] = True
 
-      # Location, Opponent, and Start Time — parsed from e.g. "@ATL 4:15 PM PDT" or "ATL 7:05 PM EDT"
+      # Location, Opponent, Start Time, and game-scheduled flag
       game_info_span = row.find('span', {'class': 'lineup-game-info'})
-      game_info_text = game_info_span.text.strip() if game_info_span else '---'
+      game_info_text = get_game_info_text(game_info_span) if isinstance(game_info_span, Tag) else '---'
+      pitcher_data["gamescheduled"] = game_info_text != '---'
       if game_info_text != '---':
         if game_info_text.startswith('@'):
           pitcher_data["Location"] = "AWAY"
@@ -358,17 +430,88 @@ if soup.find(id="team-switcher-menu"):
         pitcher_data["Start Time"] = parts[1] if len(parts) > 1 else None
 
       # Last 5 days' pitch counts — day_1 is most recent, day_5 is five days ago
-      pc_container = row.find(class_='pitch_count_last_five_days')
-      if pc_container:
+      pc_container = row.select_one('td.pitch_count_container .pitch_count_last_five_days')
+      if isinstance(pc_container, Tag):
         for j, col in enumerate(pc_cols):
           pc_td = pc_container.find('td', class_=f'day_{j + 1}')
-          if pc_td:
+          if isinstance(pc_td, Tag):
             raw = pc_td.text.strip()
             pitcher_data[col] = int(raw) if raw.isdigit() else None
 
+      # P/IP — the <td> immediately after the pitch_count_container (no class, always visible)
+      pip_td = row.select_one('td.pitch_count_container + td')
+      if pip_td:
+        raw_pip = pip_td.text.strip()
+        pitcher_data["P/IP"] = float(raw_pip) if raw_pip else None
+
       parsed_pitchers.append(pitcher_data)
 
-  df_pitchers = pd.DataFrame(parsed_pitchers, columns=["pos", "Name", "SP", "RP", "Starting", "Following", "Location", "Opponent", "Start Time"] + pc_cols)
+  df_pitchers = pd.DataFrame(parsed_pitchers, columns=pd.Index(["id", "pos", "locked", "gamescheduled", "Name", "SP", "RP", "Starting", "Following", "Location", "Opponent", "Start Time", "P/IP"] + pc_cols))
+
+  # --- Bench out pitchers in the wrong slot ---
+
+  # SP slot: bench anyone not confirmed as today's starter (not-starting, followers, no-game)
+  for _, p_row in df_pitchers[df_pitchers['id'].notna()].query(
+    "pos == 'SP' and not locked and Starting != True"
+  ).iterrows():
+    callajax(today, p_row['id'], 'SP', 'Bench')
+    df_pitchers.loc[df_pitchers['id'] == p_row['id'], 'pos'] = 'Bench'
+    df_pitchers = pd.concat([df_pitchers, pd.DataFrame([{'pos': 'SP'}])], ignore_index=True)
+    print(f"SP -> Bench, {p_row['Name']}")
+
+  # RP slot: bench confirmed starters (they need an SP slot) and fatigued relievers (pitched 2 days in a row)
+  fatigued_mask = (df_pitchers['PC_1'].fillna(0) > 0) & (df_pitchers['PC_2'].fillna(0) > 0)
+  for _, p_row in df_pitchers[
+    df_pitchers['id'].notna() &
+    (df_pitchers['pos'] == 'RP') &
+    ~df_pitchers['locked'] &
+    ((df_pitchers['Starting'] == True) | fatigued_mask)
+  ].iterrows():
+    callajax(today, p_row['id'], 'RP', 'Bench')
+    df_pitchers.loc[df_pitchers['id'] == p_row['id'], 'pos'] = 'Bench'
+    df_pitchers = pd.concat([df_pitchers, pd.DataFrame([{'pos': 'RP'}])], ignore_index=True)
+    print(f"RP -> Bench, {p_row['Name']}")
+
+  # --- Fill pitcher lineup slots ---
+
+  # Fill SP slots: confirmed starters with SP eligibility, pulled from bench
+  while df_pitchers[(df_pitchers['pos'] == 'SP') & df_pitchers['id'].isnull()].shape[0] > 0:
+    sp_candidates = df_pitchers[
+      (df_pitchers['SP'] == True) &
+      (df_pitchers['Starting'] == True) &
+      (df_pitchers['gamescheduled'] == True) &
+      ~df_pitchers['locked'] &
+      (df_pitchers['pos'] == 'Bench')
+    ]
+    if sp_candidates.empty:
+      break
+    tomove = sp_candidates.iloc[0]
+    callajax(today, tomove['id'], 'Bench', 'SP')
+    df_pitchers.loc[df_pitchers[df_pitchers['id'] == tomove['id']].index[0], 'pos'] = 'SP'
+    df_pitchers.loc[df_pitchers[(df_pitchers['pos'] == 'SP') & df_pitchers['id'].isnull()].index[0], 'pos'] = 'Bench'
+    print(f"Bench -> SP, {tomove['Name']}")
+
+  # Fill RP slots: RP-eligible, not a confirmed starter, not fatigued; followers preferred, then highest P/IP
+  while df_pitchers[(df_pitchers['pos'] == 'RP') & df_pitchers['id'].isnull()].shape[0] > 0:
+    fatigued = (df_pitchers['PC_1'].fillna(0) > 0) & (df_pitchers['PC_2'].fillna(0) > 0)
+    rp_candidates = df_pitchers[
+      (df_pitchers['RP'] == True) &
+      (df_pitchers['Starting'] != True) &
+      (df_pitchers['gamescheduled'] == True) &
+      ~df_pitchers['locked'] &
+      ~fatigued &
+      (df_pitchers['pos'] == 'Bench')
+    ].copy()
+    if rp_candidates.empty:
+      break
+    rp_candidates = rp_candidates.sort_values(
+      by=['Following', 'P/IP'], ascending=[False, False], na_position='last'
+    )
+    tomove = rp_candidates.iloc[0]
+    callajax(today, tomove['id'], 'Bench', 'RP')
+    df_pitchers.loc[df_pitchers[df_pitchers['id'] == tomove['id']].index[0], 'pos'] = 'RP'
+    df_pitchers.loc[df_pitchers[(df_pitchers['pos'] == 'RP') & df_pitchers['id'].isnull()].index[0], 'pos'] = 'Bench'
+    print(f"Bench -> RP, {tomove['Name']}")
 
 else:
   print("Authentication failed. Please check your .env file.")
