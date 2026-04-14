@@ -30,7 +30,13 @@ def return_hot_offenses():
                     continue
 
     today = datetime.datetime.today().strftime('%Y-%m-%d')
+    try:
+        with open('hot_offenses.json', 'r') as f:
+            existing = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        existing = {}
+    existing[today] = hot_offenses
     with open('hot_offenses.json', 'w') as f:
-        json.dump({today: hot_offenses}, f)
+        json.dump(existing, f)
 
     return hot_offenses
