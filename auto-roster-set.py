@@ -313,7 +313,7 @@ if soup.find(id="team-switcher-menu"):
       break
 
     # Scarcity heuristic: fill the position with fewest eligible candidates first
-    counts = available[eligible_cols].sum()
+    counts = available[eligible_cols].sum().astype(int)
     counts = counts[counts > 0]
     if counts.empty:
       break
@@ -479,7 +479,7 @@ if soup.find(id="team-switcher-menu"):
   for _, p_row in df_pitchers[
     df_pitchers['id'].notna() &
     (df_pitchers['pos'] == 'RP') &
-    ~df_pitchers['locked'] &
+    (df_pitchers['locked'] != True) &
     ((df_pitchers['Starting'] == True) | fatigued_mask)
   ].iterrows():
     callajax(today, p_row['id'], 'RP', 'Bench')
@@ -495,7 +495,7 @@ if soup.find(id="team-switcher-menu"):
       (df_pitchers['SP'] == True) &
       (df_pitchers['Starting'] == True) &
       (df_pitchers['gamescheduled'] == True) &
-      ~df_pitchers['locked'] &
+      (df_pitchers['locked'] != True) &
       (df_pitchers['pos'] == 'Bench') &
       ~df_pitchers['Opponent'].isin(hot_offense_teams)
     ]
@@ -514,7 +514,7 @@ if soup.find(id="team-switcher-menu"):
       (df_pitchers['RP'] == True) &
       (df_pitchers['Starting'] != True) &
       (df_pitchers['gamescheduled'] == True) &
-      ~df_pitchers['locked'] &
+      (df_pitchers['locked'] != True) &
       ~fatigued &
       (df_pitchers['pos'] == 'Bench')
     ].copy()
