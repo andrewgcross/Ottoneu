@@ -18,7 +18,7 @@ from bs4 import BeautifulSoup, Tag
 import datetime
 import pandas as pd
 from dotenv import load_dotenv
-from typing import Any, cast
+from typing import cast
 import os
 import json
 from return_hot_offenses import return_hot_offenses
@@ -101,7 +101,7 @@ def moveplayer(date,player_id,position_old,position_new):
 
   print(f"{position_old} -> {position_new}, {df[df['id'] == player_id]['name'].values[0]}")
 
-def callajax(date, player_id, position_old, position_new):
+def callajax(date, player_id, position_old, position_new, name=None):
   # Constructing the exact payload the FanGraphs API now expects
   ajax_payload = {
     "method": "saveChanges",
@@ -122,7 +122,7 @@ def callajax(date, player_id, position_old, position_new):
 
   url = f"https://ottoneu.fangraphs.com/{league_id}/ajax/setlineups"
 
-  print(f"Executing move: {position_old} -> {position_new} for Player ID {player_id}")
+  print(f"Executing move: {position_old} -> {position_new} for {name if name else f'Player ID {player_id}'}")
   ajax_response = session.post(url, data=ajax_payload, headers=headers)
 
   # Quick error check to ensure the post didn't bounce
@@ -382,7 +382,7 @@ if soup.find(id="team-switcher-menu"):
       if pos not in pitcherPositions + ['Bench']:
         continue
 
-      pitcher_data: dict[str, Any] = {col: None for col in ["id", "pos", "locked", "gamescheduled", "Name", "SP", "RP", "Starting", "Following", "Location", "Opponent", "Start Time", "P/IP"] + pc_cols}
+      pitcher_data = {col: None for col in ["id", "pos", "locked", "gamescheduled", "Name", "SP", "RP", "Starting", "Following", "Location", "Opponent", "Start Time", "P/IP"] + pc_cols}
       pitcher_data["pos"] = pos
       pitcher_data["locked"] = 'locked' in (pos_td.get('class') or [])
       pitcher_data["SP"] = False
@@ -469,7 +469,7 @@ if soup.find(id="team-switcher-menu"):
   for _, p_row in df_pitchers[df_pitchers['id'].notna()].query(
     "pos == 'SP' and not locked and Starting != True"
   ).iterrows():
-    callajax(today, p_row['id'], 'SP', 'Bench')
+    callajax(today, p_row['id'], 'SP', 'Bench', p_row['Name'])
     df_pitchers.loc[df_pitchers['id'] == p_row['id'], 'pos'] = 'Bench'
     df_pitchers = pd.concat([df_pitchers, pd.DataFrame([{'pos': 'SP'}])], ignore_index=True)
     print(f"SP -> Bench, {p_row['Name']}")
@@ -482,7 +482,7 @@ if soup.find(id="team-switcher-menu"):
     (df_pitchers['locked'] != True) &
     ((df_pitchers['Starting'] == True) | fatigued_mask)
   ].iterrows():
-    callajax(today, p_row['id'], 'RP', 'Bench')
+    callajax(today, p_row['id'], 'RP', 'Bench', p_row['Name'])
     df_pitchers.loc[df_pitchers['id'] == p_row['id'], 'pos'] = 'Bench'
     df_pitchers = pd.concat([df_pitchers, pd.DataFrame([{'pos': 'RP'}])], ignore_index=True)
     print(f"RP -> Bench, {p_row['Name']}")
@@ -492,7 +492,6 @@ if soup.find(id="team-switcher-menu"):
   # Fill SP slots: confirmed starters with SP eligibility, pulled from bench
   while df_pitchers[(df_pitchers['pos'] == 'SP') & df_pitchers['id'].isnull()].shape[0] > 0:
     sp_candidates = df_pitchers[
-      (df_pitchers['SP'] == True) &
       (df_pitchers['Starting'] == True) &
       (df_pitchers['gamescheduled'] == True) &
       (df_pitchers['locked'] != True) &
@@ -502,7 +501,7 @@ if soup.find(id="team-switcher-menu"):
     if sp_candidates.empty:
       break
     tomove = sp_candidates.iloc[0]
-    callajax(today, tomove['id'], 'Bench', 'SP')
+    callajax(today, tomove['id'], 'Bench', 'SP', tomove['Name'])
     df_pitchers.loc[df_pitchers[df_pitchers['id'] == tomove['id']].index[0], 'pos'] = 'SP'
     df_pitchers.loc[df_pitchers[(df_pitchers['pos'] == 'SP') & df_pitchers['id'].isnull()].index[0], 'pos'] = 'Bench'
     print(f"Bench -> SP, {tomove['Name']}")
@@ -524,7 +523,7 @@ if soup.find(id="team-switcher-menu"):
       by=['Following', 'P/IP'], ascending=[False, False], na_position='last'
     )
     tomove = rp_candidates.iloc[0]
-    callajax(today, tomove['id'], 'Bench', 'RP')
+    callajax(today, tomove['id'], 'Bench', 'RP', tomove['Name'])
     df_pitchers.loc[df_pitchers[df_pitchers['id'] == tomove['id']].index[0], 'pos'] = 'RP'
     df_pitchers.loc[df_pitchers[(df_pitchers['pos'] == 'RP') & df_pitchers['id'].isnull()].index[0], 'pos'] = 'Bench'
     print(f"Bench -> RP, {tomove['Name']}")
