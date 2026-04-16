@@ -23,8 +23,12 @@ def create_env_file():
     with open("hot_offenses.json", "w") as f:
         json.dump({}, f)
 
+    with open("movement_log.txt", "w") as f:
+        pass  # auto-roster-set.py appends a dated header and move lines each run
+
     print("\nSuccessfully created .env file!")
     print("Created empty hot_offenses.json")
+    print("Created movement_log.txt")
     print("Make sure '.env' is listed in your .gitignore file to stay secure.")
 
 if __name__ == "__main__":

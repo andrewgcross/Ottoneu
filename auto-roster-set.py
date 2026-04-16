@@ -81,25 +81,26 @@ def parse_start_time(time_str, date_str):
         return None
 
 def moveplayer(date,player_id,position_old,position_new):
-  global df  
-  
+  global df
+  player_name = df[df['id']==player_id]['name'].values[0]
+
   #Keep the dataframe synched so that logical operations can continue
   #Bench slots are an imaginary position and there can be an (infinite) number, so add rows as necessary
   if position_new=='Bench':
     df.loc[df[df['id']==player_id].index,'pos'] = 'Bench'
     new_row = pd.DataFrame([{'pos': position_old}])
     df = pd.concat([df, new_row], ignore_index=True)
-    callajax(date, player_id, position_old, position_new)
-    
+    callajax(date, player_id, position_old, position_new, name=player_name)
+
   elif position_new in lineupPositions: #the new position has to be a valid position
     if df[df['id']==player_id][position_new].values[0]: #Make sure the person being moved is eligible to be moved into the specified slot
       #Make sure the spot the player is being moved to is available
       if df[df['pos'] == position_new]['id'].isnull().values.any(): #lengthy construct due to the fact there are multiple OF slots
-        callajax(date, player_id, position_old, position_new)
+        callajax(date, player_id, position_old, position_new, name=player_name)
         df.loc[df[df['id'] == player_id].index[0], 'pos'] = position_new
         df.loc[df[(df['pos'] == position_new) & (df['id'].isnull())].index[0], 'pos'] = position_old
 
-  print(f"{position_old} -> {position_new}, {df[df['id'] == player_id]['name'].values[0]}")
+  print(f"{position_old} -> {position_new}, {player_name}")
 
 def callajax(date, player_id, position_old, position_new, name=None):
   # Constructing the exact payload the FanGraphs API now expects
@@ -128,6 +129,11 @@ def callajax(date, player_id, position_old, position_new, name=None):
   # Quick error check to ensure the post didn't bounce
   if ajax_response.status_code != 200:
     print(f"Warning: Move failed with status code {ajax_response.status_code}. Response: {ajax_response.text}")
+  else:
+    timestamp = datetime.datetime.now().strftime('%H:%M:%S')
+    player_label = name if name else f'Player {player_id}'
+    with open('movement_log.txt', 'a') as log_f:
+      log_f.write(f"  {timestamp}  {position_old:<6}  ->  {position_new:<6}  {player_label}\n")
 
 
 # --- Authentication ---
@@ -162,6 +168,8 @@ response = session.post(login_url, data=payload)
 # Verification: If successful, the final URL should be on the ottoneu subdomain
 if "ottoneu.fangraphs.com" in response.url:
     print("Successfully authenticated via WordPress login.")
+    with open('movement_log.txt', 'a') as log_f:
+        log_f.write(f"\n--- {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n")
 else:
     print(f"Login failed. Current URL: {response.url}")
 
@@ -266,7 +274,40 @@ if soup.find(id="team-switcher-menu"):
   # Move active lineup players to the bench if unlocked and either has no game or is explicitly not starting
   for index, row in df[df['id'].notna()].query("pos in @lineupPositions and not locked and (not gamescheduled or starting == False)").iterrows():
     moveplayer(today, row['id'], row['pos'], 'Bench')
-  
+
+  # --- Pre-fill optimization: cascade flex occupants into primary slots ---
+  # Before placing bench players, move any MI/Util occupant to an empty primary
+  # slot they qualify for.  This ensures e.g. a player with 2B/SS eligibility
+  # sitting in MI is moved to SS/2B before the fill loop runs, so the fill loop
+  # only needs to backfill the vacated flex slot from the bench.
+  flex_to_primary = [
+    ('MI', ['2B', 'SS']),
+    ('Util', [p for p in lineupPositions if p not in ('MI', 'Util')]),
+  ]
+
+  opt_changed = True
+  while opt_changed:
+    opt_changed = False
+    for flex_pos, targets in flex_to_primary:
+      for _, player in df[
+        (df['pos'] == flex_pos) &
+        df['id'].notna() &
+        (df['locked'] != True) &
+        (df['starting'] != False) &
+        (df['gamescheduled'] != False)
+      ].iterrows():
+        for target in targets:
+          if target not in df.columns or player.get(target) != True:
+            continue
+          if df[(df['pos'] == target) & df['id'].isnull()].shape[0] > 0:
+            moveplayer(today, player['id'], flex_pos, target)
+            opt_changed = True
+            break
+        if opt_changed:
+          break
+      if opt_changed:
+        break
+
   # --- Fill starting lineup slots ---
 
   # Flex positions that must wait until their primary counterparts are resolved first
@@ -319,8 +360,29 @@ if soup.find(id="team-switcher-menu"):
       break
     pos = counts.idxmin()
 
-    # Candidates: eligible for pos, not already occupying it
-    candidates = available[(available[pos] == True) & (available['pos'] != pos)].copy()
+    # Candidates: eligible for pos, not already occupying it.
+    # When filling a flex slot (MI, Util), a player currently in a primary slot
+    # is only a valid candidate if the bench has someone who can backfill their
+    # vacated slot — otherwise pulling them creates an unfillable hole.
+    def _backfillable(row):
+      if row['pos'] == 'Bench':
+        return True
+      from_pos = row['pos']
+      if from_pos not in df.columns:
+        return False
+      return df[
+        (df['pos'] == 'Bench') &
+        (df['starting'] != False) &
+        (df['gamescheduled'] != False) &
+        (df['locked'] != True) &
+        (df[from_pos] == True)
+      ].shape[0] > 0
+
+    raw_candidates = available[(available[pos] == True) & (available['pos'] != pos)]
+    if pos in {'MI', 'Util'}:
+      candidates = raw_candidates[raw_candidates.apply(_backfillable, axis=1)].copy()
+    else:
+      candidates = raw_candidates.copy()
 
     if candidates.empty:
       resolved.append(pos)
