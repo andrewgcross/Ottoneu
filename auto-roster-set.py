@@ -269,7 +269,10 @@ if soup.find(id="team-switcher-menu"):
 
       parsed_players.append(player_data)
 
-  df = pd.DataFrame(parsed_players)
+  if parsed_players:
+    df = pd.DataFrame(parsed_players)
+  else:
+    print("Warning: no batter rows were parsed — batter table may be missing or empty.")
 
   # Move active lineup players to the bench if unlocked and either has no game or is explicitly not starting
   for index, row in df[df['id'].notna()].query("pos in @lineupPositions and not locked and (not gamescheduled or starting == False)").iterrows():
@@ -379,10 +382,7 @@ if soup.find(id="team-switcher-menu"):
       ].shape[0] > 0
 
     raw_candidates = available[(available[pos] == True) & (available['pos'] != pos)]
-    if pos in {'MI', 'Util'}:
-      candidates = raw_candidates[raw_candidates.apply(_backfillable, axis=1)].copy()
-    else:
-      candidates = raw_candidates.copy()
+    candidates = raw_candidates[raw_candidates.apply(_backfillable, axis=1)].copy()
 
     if candidates.empty:
       resolved.append(pos)
@@ -536,13 +536,13 @@ if soup.find(id="team-switcher-menu"):
     df_pitchers = pd.concat([df_pitchers, pd.DataFrame([{'pos': 'SP'}])], ignore_index=True)
     print(f"SP -> Bench, {p_row['Name']}")
 
-  # RP slot: bench confirmed starters (they need an SP slot) and fatigued relievers (pitched 2 days in a row)
+  # RP slot: bench confirmed starters (they need an SP slot), fatigued relievers (pitched 2 days in a row), and anyone with no game
   fatigued_mask = (df_pitchers['PC_1'].fillna(0) > 0) & (df_pitchers['PC_2'].fillna(0) > 0)
   for _, p_row in df_pitchers[
     df_pitchers['id'].notna() &
     (df_pitchers['pos'] == 'RP') &
     (df_pitchers['locked'] != True) &
-    ((df_pitchers['Starting'] == True) | fatigued_mask)
+    ((df_pitchers['Starting'] == True) | fatigued_mask | (df_pitchers['gamescheduled'] != True))
   ].iterrows():
     callajax(today, p_row['id'], 'RP', 'Bench', p_row['Name'])
     df_pitchers.loc[df_pitchers['id'] == p_row['id'], 'pos'] = 'Bench'
