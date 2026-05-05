@@ -101,7 +101,7 @@ def moveplayer(date,player_id,position_old,position_new):
         df.loc[df[df['id'] == player_id].index[0], 'pos'] = position_new
         df.loc[df[(df['pos'] == position_new) & (df['id'].isnull())].index[0], 'pos'] = position_old
 
-  print(f"{position_old} -> {position_new}, {player_name}")
+  # print(f"{position_old} → {position_new}, {player_name}")
 
 def callajax(date, player_id, position_old, position_new, name=None):
   # Constructing the exact payload the FanGraphs API now expects
@@ -124,7 +124,7 @@ def callajax(date, player_id, position_old, position_new, name=None):
 
   url = f"https://ottoneu.fangraphs.com/{league_id}/ajax/setlineups"
 
-  print(f"Executing move: {position_old} -> {position_new} for {name if name else f'Player ID {player_id}'}")
+  print(f"Executing move: {position_old} → {position_new} for {name if name else f'Player ID {player_id}'}")
   ajax_response = session.post(url, data=ajax_payload, headers=headers)
 
   # Quick error check to ensure the post didn't bounce
@@ -589,7 +589,7 @@ if soup.find(id="team-switcher-menu"):
     callajax(today, p_row['id'], 'SP', 'Bench', p_row['Name'])
     df_pitchers.loc[df_pitchers['id'] == p_row['id'], 'pos'] = 'Bench'
     df_pitchers = pd.concat([df_pitchers, pd.DataFrame([{'pos': 'SP'}])], ignore_index=True)
-    print(f"SP -> Bench, {p_row['Name']}")
+    # print(f"SP → Bench, {p_row['Name']}")
 
   # RP slot: bench confirmed starters (they need an SP slot), fatigued relievers (pitched 2 days in a row), and anyone with no game
   fatigued_mask = (df_pitchers['PC_1'].fillna(0) > 0) & (df_pitchers['PC_2'].fillna(0) > 0)
@@ -602,7 +602,7 @@ if soup.find(id="team-switcher-menu"):
     callajax(today, p_row['id'], 'RP', 'Bench', p_row['Name'])
     df_pitchers.loc[df_pitchers['id'] == p_row['id'], 'pos'] = 'Bench'
     df_pitchers = pd.concat([df_pitchers, pd.DataFrame([{'pos': 'RP'}])], ignore_index=True)
-    print(f"RP -> Bench, {p_row['Name']}")
+    # print(f"RP → Bench, {p_row['Name']}")
 
   # --- Fill pitcher lineup slots ---
 
@@ -621,7 +621,7 @@ if soup.find(id="team-switcher-menu"):
     callajax(today, tomove['id'], 'Bench', 'SP', tomove['Name'])
     df_pitchers.loc[df_pitchers[df_pitchers['id'] == tomove['id']].index[0], 'pos'] = 'SP'
     df_pitchers.loc[df_pitchers[(df_pitchers['pos'] == 'SP') & df_pitchers['id'].isnull()].index[0], 'pos'] = 'Bench'
-    print(f"Bench -> SP, {tomove['Name']}")
+    # print(f"Bench → SP, {tomove['Name']}")
 
   # Fill RP slots: RP-eligible, not a confirmed starter, not fatigued; followers preferred, then highest P/IP
   while df_pitchers[(df_pitchers['pos'] == 'RP') & df_pitchers['id'].isnull()].shape[0] > 0:
@@ -643,7 +643,7 @@ if soup.find(id="team-switcher-menu"):
     callajax(today, tomove['id'], 'Bench', 'RP', tomove['Name'])
     df_pitchers.loc[df_pitchers[df_pitchers['id'] == tomove['id']].index[0], 'pos'] = 'RP'
     df_pitchers.loc[df_pitchers[(df_pitchers['pos'] == 'RP') & df_pitchers['id'].isnull()].index[0], 'pos'] = 'Bench'
-    print(f"Bench -> RP, {tomove['Name']}")
+    # print(f"Bench → RP, {tomove['Name']}")
 
 else:
   print("Authentication failed. Please check your .env file.")
