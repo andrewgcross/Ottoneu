@@ -27,7 +27,7 @@ def return_games_played(session, league_id, today=None, soup=None):
     except (FileNotFoundError, json.JSONDecodeError):
         existing = {}
 
-    if today in existing:
+    if today in existing and existing[today].get("batters"):
         return existing[today]
 
     if soup is None:
@@ -37,21 +37,29 @@ def return_games_played(session, league_id, today=None, soup=None):
 
     result = {"batters": {}, "pitchers": {}}
 
+    all_sections = soup.find_all('section', class_='section-container')
+    print(f"  [games_played] {len(all_sections)} section.section-container elements found on page")
+
     games_section = next(
-        (s for s in soup.find_all('section', class_='section-container')
+        (s for s in all_sections
          if isinstance(s.find('h2'), Tag) and 'Games Played' in s.find('h2').get_text()),
         None
     )
+    print(f"  [games_played] Games Played section found: {games_section is not None}")
 
     if games_section is not None:
         batter_h3 = next(
             (h for h in games_section.find_all('h3') if 'Position Players' in h.get_text()),
             None
         )
+        print(f"  [games_played] Position Players h3 found: {batter_h3 is not None}")
         if isinstance(batter_h3, Tag):
             batter_table = batter_h3.find_next('table', class_='lineup-table')
+            print(f"  [games_played] Batter table found: {batter_table is not None}")
             if isinstance(batter_table, Tag):
-                for row in batter_table.select('tbody tr'):
+                rows = batter_table.find_all('tr')
+                print(f"  [games_played] Batter table rows: {len(rows)}")
+                for row in rows:
                     cells = row.find_all('td')
                     if len(cells) >= 4:
                         pos = cells[0].get_text(strip=True)
@@ -68,7 +76,7 @@ def return_games_played(session, league_id, today=None, soup=None):
         if isinstance(pitcher_h3, Tag):
             pitcher_table = pitcher_h3.find_next('table', class_='lineup-table')
             if isinstance(pitcher_table, Tag):
-                for row in pitcher_table.select('tbody tr'):
+                for row in pitcher_table.find_all('tr'):
                     cells = row.find_all('td')
                     if len(cells) >= 4:
                         pos = cells[0].get_text(strip=True)
@@ -78,8 +86,12 @@ def return_games_played(session, league_id, today=None, soup=None):
                             "max_allowed": _parse_float(cells[3].get_text(strip=True)),
                         }
 
-    existing[today] = result
-    with open('games_played.json', 'w') as f:
-        json.dump(existing, f)
+    print(f"  [games_played] Batters scraped: {list(result['batters'].keys())}")
+
+    # Only cache if we actually got data — don't persist a failed scrape
+    if result["batters"]:
+        existing[today] = result
+        with open('games_played.json', 'w') as f:
+            json.dump(existing, f)
 
     return result

@@ -282,7 +282,7 @@ if soup.find(id="team-switcher-menu"):
   except (FileNotFoundError, json.JSONDecodeError):
     games_played_data = {}
 
-  if today not in games_played_data:
+  if today not in games_played_data or not games_played_data[today].get("batters"):
     print("Games played data not cached for today — fetching from Ottoneu...")
     games_played = return_games_played(session, league_id, today, soup=soup)
   else:
@@ -413,15 +413,21 @@ if soup.find(id="team-switcher-menu"):
     pos = counts.idxmin()
 
     # Candidates: eligible for pos, not already occupying it.
-    # When filling a flex slot (MI, Util), a player currently in a primary slot
-    # is only a valid candidate if the bench has someone who can backfill their
-    # vacated slot — otherwise pulling them creates an unfillable hole.
+    # Moving a player UP in priority (from a lower-priority slot into pos) is always
+    # allowed — the vacated slot is less valuable and will be filled next.
+    # Moving a player DOWN in priority (from a higher-priority slot into pos) requires
+    # bench coverage for the vacated slot; otherwise we sacrifice a better slot for a worse one.
     def _backfillable(row):
       if row['pos'] == 'Bench':
         return True
       from_pos = row['pos']
       if from_pos not in df.columns:
         return False
+      # Higher priority = lower index in lineupPositions = lower priority number.
+      # If from_pos has a higher priority rank (lower number) than pos, the move is
+      # downward — only allow it if there is bench coverage for from_pos.
+      if priority.get(from_pos, len(lineupPositions)) >= priority.get(pos, len(lineupPositions)):
+        return True  # moving up in priority — always fine
       return df[
         (df['pos'] == 'Bench') &
         (df['starting'] != False) &
@@ -431,13 +437,7 @@ if soup.find(id="team-switcher-menu"):
       ].shape[0] > 0
 
     raw_candidates = available[(available[pos] == True) & (available['pos'] != pos)]
-    # _backfillable guards against sacrificing a primary slot to fill a flex slot.
-    # For primary slots the fill loop's cascade (adding the vacated slot back to `fill`)
-    # already handles positional priority correctly, so no guard is needed there.
-    if pos in ('MI', 'Util'):
-      candidates = raw_candidates[raw_candidates.apply(_backfillable, axis=1)].copy()
-    else:
-      candidates = raw_candidates.copy()
+    candidates = raw_candidates[raw_candidates.apply(_backfillable, axis=1)].copy()
 
     if candidates.empty:
       resolved.append(pos)
