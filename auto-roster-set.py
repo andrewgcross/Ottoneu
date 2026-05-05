@@ -22,6 +22,7 @@ from typing import cast
 import os
 import json
 from return_hot_offenses import return_hot_offenses
+from return_games_played import return_games_played
 
 # This loads the variables from the .env file into the system environment
 load_dotenv()
@@ -273,6 +274,36 @@ if soup.find(id="team-switcher-menu"):
     df = pd.DataFrame(parsed_players)
   else:
     print("Warning: no batter rows were parsed — batter table may be missing or empty.")
+
+  # Load today's games played data; pass the already-fetched soup to avoid a second request
+  try:
+    with open('games_played.json', 'r') as f:
+      games_played_data = json.load(f)
+  except (FileNotFoundError, json.JSONDecodeError):
+    games_played_data = {}
+
+  if today not in games_played_data:
+    print("Games played data not cached for today — fetching from Ottoneu...")
+    games_played = return_games_played(session, league_id, today, soup=soup)
+  else:
+    games_played = games_played_data[today]
+
+  # Reorder lineupPositions by per-slot projected games ascending so positions with
+  # fewer scheduled games are filled first (they have the least margin to spare).
+  _batter_proj = games_played.get("batters", {})
+
+  def _proj_per_slot(pos):
+    entry = _batter_proj.get(pos)
+    if not entry or entry.get("projected") is None:
+      return float('inf')
+    max_allowed = entry.get("max_allowed")
+    slots = (max_allowed / 162) if max_allowed else 1
+    return entry["projected"] / slots
+
+  _primary = [p for p in lineupPositions if p not in ("MI", "Util")]
+  lineupPositions = sorted(_primary, key=_proj_per_slot) + ["MI", "Util"]
+  priority = {position: rank for rank, position in enumerate(lineupPositions)}
+  print(f"Lineup fill order (by projected games/slot): {lineupPositions}")
 
   # Move active lineup players to the bench if unlocked and either has no game or is explicitly not starting
   for index, row in df[df['id'].notna()].query("pos in @lineupPositions and not locked and (not gamescheduled or starting == False)").iterrows():
