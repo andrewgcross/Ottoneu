@@ -279,10 +279,12 @@ if soup.find(id="team-switcher-menu"):
     moveplayer(today, row['id'], row['pos'], 'Bench')
 
   # --- Pre-fill optimization: cascade flex occupants into primary slots ---
-  # Before placing bench players, move any MI/Util occupant to an empty primary
-  # slot they qualify for.  This ensures e.g. a player with 2B/SS eligibility
-  # sitting in MI is moved to SS/2B before the fill loop runs, so the fill loop
-  # only needs to backfill the vacated flex slot from the bench.
+  # Two cases handled in the same loop, re-run until stable:
+  #   1. Target primary slot is empty → move the flex player directly in.
+  #   2. Target slot is occupied by a non-confirmed player who is eligible for the
+  #      flex slot, and the flex player IS confirmed starting → swap them (bench the
+  #      occupant first to free the slot, then move the flex player in, then fill
+  #      the flex slot with the newly benched player).
   flex_to_primary = [
     ('MI', ['2B', 'SS']),
     ('Util', [p for p in lineupPositions if p not in ('MI', 'Util')]),
@@ -306,6 +308,22 @@ if soup.find(id="team-switcher-menu"):
             moveplayer(today, player['id'], flex_pos, target)
             opt_changed = True
             break
+          elif player['starting'] == True:
+            occupant = df[
+              (df['pos'] == target) &
+              df['id'].notna() &
+              (df['locked'] != True) &
+              (df['starting'] != True) &
+              (df['gamescheduled'] != False) &
+              (df[flex_pos] == True)
+            ]
+            if not occupant.empty:
+              occ = occupant.iloc[0]
+              moveplayer(today, occ['id'], target, 'Bench')
+              moveplayer(today, player['id'], flex_pos, target)
+              moveplayer(today, occ['id'], 'Bench', flex_pos)
+              opt_changed = True
+              break
         if opt_changed:
           break
       if opt_changed:
@@ -382,7 +400,13 @@ if soup.find(id="team-switcher-menu"):
       ].shape[0] > 0
 
     raw_candidates = available[(available[pos] == True) & (available['pos'] != pos)]
-    candidates = raw_candidates[raw_candidates.apply(_backfillable, axis=1)].copy()
+    # _backfillable guards against sacrificing a primary slot to fill a flex slot.
+    # For primary slots the fill loop's cascade (adding the vacated slot back to `fill`)
+    # already handles positional priority correctly, so no guard is needed there.
+    if pos in ('MI', 'Util'):
+      candidates = raw_candidates[raw_candidates.apply(_backfillable, axis=1)].copy()
+    else:
+      candidates = raw_candidates.copy()
 
     if candidates.empty:
       resolved.append(pos)
