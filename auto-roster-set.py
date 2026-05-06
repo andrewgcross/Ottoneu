@@ -124,6 +124,8 @@ def callajax(date, player_id, position_old, position_new, name=None):
 
   url = f"https://ottoneu.fangraphs.com/{league_id}/ajax/setlineups"
 
+  global moves_made
+  moves_made += 1
   print(f"Executing move: {position_old} → {position_new} for {name if name else f'Player ID {player_id}'}")
   ajax_response = session.post(url, data=ajax_payload, headers=headers)
 
@@ -136,6 +138,8 @@ def callajax(date, player_id, position_old, position_new, name=None):
     with open('movement_log.txt', 'a') as log_f:
       log_f.write(f"  {timestamp}  {position_old:<6}  ->  {position_new:<6}  {player_label}\n")
 
+
+moves_made = 0
 
 # --- Authentication ---
 login_url = "https://blogs.fangraphs.com/wp-login.php"
@@ -270,17 +274,20 @@ if soup.find(id="team-switcher-menu"):
 
       parsed_players.append(player_data)
 
-  if parsed_players:
-    df = pd.DataFrame(parsed_players)
-  else:
-    print("Warning: no batter rows were parsed — batter table may be missing or empty.")
-
   # Load today's games played data; pass the already-fetched soup to avoid a second request
   try:
     with open('games_played.json', 'r') as f:
       games_played_data = json.load(f)
   except (FileNotFoundError, json.JSONDecodeError):
     games_played_data = {}
+
+  if parsed_players:
+    df = pd.DataFrame(parsed_players)
+  else:
+    if games_played_data.get(today, {}).get("batters"):
+      print("Lineup data already cached for today — batter table unavailable, no moves to evaluate.")
+    else:
+      print("Warning: no batter rows were parsed — batter table may be missing or empty.")
 
   if today not in games_played_data or not games_played_data[today].get("batters"):
     print("Games played data not cached for today — fetching from Ottoneu...")
@@ -644,6 +651,9 @@ if soup.find(id="team-switcher-menu"):
     df_pitchers.loc[df_pitchers[df_pitchers['id'] == tomove['id']].index[0], 'pos'] = 'RP'
     df_pitchers.loc[df_pitchers[(df_pitchers['pos'] == 'RP') & df_pitchers['id'].isnull()].index[0], 'pos'] = 'Bench'
     # print(f"Bench → RP, {tomove['Name']}")
+
+  if moves_made == 0:
+    print("No roster moves made.")
 
 else:
   print("Authentication failed. Please check your .env file.")
