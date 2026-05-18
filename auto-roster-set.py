@@ -30,6 +30,15 @@ league_id = os.getenv("LEAGUE")
 target_date = os.getenv("TARGET_DATE")  # Optional: override today's date (YYYY-MM-DD) for debugging
 team_id = os.getenv("TEAM_ID")          # Optional: required to view a specific future date's lineup
 
+_catcher_raw = os.getenv("CATCHER_SLOTS_TO_FILL", "2")
+try:
+    catcher_slots_to_fill = int(_catcher_raw)
+    if catcher_slots_to_fill not in (1, 2):
+        raise ValueError
+except ValueError:
+    print(f"Warning: CATCHER_SLOTS_TO_FILL='{_catcher_raw}' is invalid (must be 1 or 2). Defaulting to 2.")
+    catcher_slots_to_fill = 2
+
 session = requests.Session()
 session.headers.update({
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -305,12 +314,15 @@ if soup.find(id="team-switcher-menu"):
       return float('inf')
     max_allowed = entry.get("max_allowed")
     slots = (max_allowed / 162) if max_allowed else 1
+    if pos == 'C':
+      slots = max(slots, catcher_slots_to_fill)
     return entry["projected"] / slots
 
   _primary = [p for p in lineupPositions if p not in ("MI", "Util")]
   lineupPositions = sorted(_primary, key=_proj_per_slot) + ["MI", "Util"]
   priority = {position: rank for rank, position in enumerate(lineupPositions)}
   print(f"Lineup fill order (by projected games/slot): {lineupPositions}")
+  print(f"Catcher slots to fill: {catcher_slots_to_fill}")
 
   # Move active lineup players to the bench if unlocked and either has no game or is explicitly not starting
   for index, row in df[df['id'].notna()].query("pos in @lineupPositions and not locked and (not gamescheduled or starting == False)").iterrows():
@@ -383,6 +395,12 @@ if soup.find(id="team-switcher-menu"):
     return hand != pitcher_hand if pitcher_hand else False
 
   fill: pd.Series = df[df['pos'].isin(lineupPositions) & df['id'].isnull()]['pos']
+
+  # Respect CATCHER_SLOTS_TO_FILL: drop excess empty C slots from the fill queue
+  c_in_fill = int((fill == 'C').sum())
+  if c_in_fill > catcher_slots_to_fill:
+    fill = fill.drop(fill[fill == 'C'].index[:c_in_fill - catcher_slots_to_fill])
+
   resolved = []
 
   while not fill.empty:
