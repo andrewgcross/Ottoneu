@@ -396,10 +396,13 @@ if soup.find(id="team-switcher-menu"):
 
   fill: pd.Series = df[df['pos'].isin(lineupPositions) & df['id'].isnull()]['pos']
 
-  # Respect CATCHER_SLOTS_TO_FILL: drop excess empty C slots from the fill queue
+  # Respect CATCHER_SLOTS_TO_FILL: drop excess empty C slots from the fill queue.
+  # Must account for C slots already occupied so a pre-filled C counts against the limit.
+  c_occupied = int(df[(df['pos'] == 'C') & df['id'].notna()].shape[0])
   c_in_fill = int((fill == 'C').sum())
-  if c_in_fill > catcher_slots_to_fill:
-    fill = fill.drop(fill[fill == 'C'].index[:c_in_fill - catcher_slots_to_fill])
+  c_excess = (c_occupied + c_in_fill) - catcher_slots_to_fill
+  if c_excess > 0:
+    fill = fill.drop(fill[fill == 'C'].index[:min(c_excess, c_in_fill)])
 
   resolved = []
 
