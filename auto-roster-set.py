@@ -354,6 +354,8 @@ if soup.find(id="team-switcher-menu"):
         for target in targets:
           if target not in df.columns or player.get(target) != True:
             continue
+          if target == 'C' and int(df[(df['pos'] == 'C') & df['id'].notna()].shape[0]) >= catcher_slots_to_fill:
+            continue
           if df[(df['pos'] == target) & df['id'].isnull()].shape[0] > 0:
             moveplayer(today, player['id'], flex_pos, target)
             opt_changed = True
