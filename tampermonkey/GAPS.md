@@ -10,7 +10,7 @@ contains year-over-year season stats, not percentile rankings.
 **To fix:** Open DevTools → Network → filter XHR/Fetch on a Savant player page and identify
 the endpoint the React component calls to populate `#percentile-sliders`. It is likely under
 `/player-services/`. Once found, add it as an on-demand fetch inside `showSavantOverlay`
-in `otto-statcast-display.js`.
+in `otto-statcast.user.js`.
 
 ---
 
@@ -62,14 +62,14 @@ Note: expected stats CSV contains only xBA/xSLG/xwOBA differentials — no EV, b
 hard hit%, whiff%, K%, or BB%. Those are percentile-circle-only for qualified players.
 
 Note: `arm_strength` and `swing_length` are stored in the `pctl_${year}` object but are
-not currently displayed in the popup (`POPUP_SECTIONS` in `otto-statcast-display.js`).
+not currently displayed in the popup (`POPUP_SECTIONS` in `otto-statcast.user.js`).
 Arm strength is relevant for outfielders and catchers; could be added to a Fielding section.
 
 ---
 
 ## 6. Pitcher page scripts not yet written
 
-`otto-statcast-core.js` fully supports pitchers (`type='pitcher'` throughout, separate
+`otto-statcast.user.js` fully supports pitchers (`type='pitcher'` throughout, separate
 percentile + expected stats fetches) but no TamperMonkey page script has been written yet.
 
 **High-value targets:**
@@ -80,9 +80,7 @@ percentile + expected stats fetches) but no TamperMonkey page script has been wr
 
 ## 7. Remaining high-value page targets
 
-`otto-search.user.js` covers the main search/free agent page. Still missing:
+`otto-statcast.user.js` currently covers setlineups, search, and individual player pages. Still missing:
 
 - **Trade analyser** — comparing player values across teams
-- **Individual Ottoneu player page** (`/players/{id}`) — a natural place for the full
-  Savant popup without needing hover on a tiny emoji
 - **Roster add page** (`/roster/add`) — if separate from `/search`

@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         Ottoneu – Statcast
 // @namespace    https://ottoneu.fangraphs.com/
-// @version      1.0
-// @description  Adds Baseball Savant Statcast percentile columns to Ottoneu setlineups and search pages
+// @version      1.1
+// @description  Adds Baseball Savant Statcast percentile columns to Ottoneu setlineups, search, and player pages
 // @match        https://ottoneu.fangraphs.com/*/setlineups*
 // @match        https://ottoneu.fangraphs.com/*/search*
+// @match        https://ottoneu.fangraphs.com/*/players/*
 // @grant        GM_xmlhttpRequest
 // @connect      baseballsavant.mlb.com
 // @connect      ottoneu.fangraphs.com
@@ -916,11 +917,13 @@ var OttoStatcastUI = (() => { // eslint-disable-line no-var
 (async () => {
   'use strict';
 
-  const { buildCell, addPlayerLinks } = OttoStatcastUI;
+  const { buildCell, addPlayerLinks, showEditPopup, renderPercentileGrid, renderRawGrid } = OttoStatcastUI;
 
   const _style = document.createElement('style');
-  const leagueId = window.location.pathname.split('/')[1];
+  const pathParts = window.location.pathname.split('/');
+  const leagueId = pathParts[1];
   const isLineup = window.location.pathname.includes('/setlineups');
+  const isPlayerPage = pathParts[2] === 'players' && /^\d+$/.test(pathParts[3] || '') && !pathParts[4];
 
   const COLS = [
     { pctlKey: null, rawKey: 'runs_all', label: 'Runs', type: 'run_value', fmt: v => (v >= 0 ? '+' : '') + v.toFixed(1) },
@@ -999,6 +1002,97 @@ var OttoStatcastUI = (() => { // eslint-disable-line no-var
           const bio = row.querySelector('.lineup-player-bio');
           addPlayerLinks(bio, playerName, ottId, null);
         });
+    }
+
+  } else if (isPlayerPage) {
+    // Individual player page: /{leagueId}/players/{ottId}
+    _style.textContent = '.otto-savant-link, .otto-edit-link { text-decoration: none !important; }';
+    document.head.appendChild(_style);
+
+    const ottId = pathParts[3];
+    const playerName = document.querySelector('h1')?.textContent?.trim() || null;
+
+    const card = document.createElement('div');
+    card.style.cssText = [
+      'background:#fff', 'border:1px solid #ddd', 'border-radius:8px',
+      'padding:14px 16px', 'margin:16px 0', 'max-width:500px',
+      'font-family:sans-serif', 'box-shadow:0 1px 4px rgba(0,0,0,0.08)',
+    ].join(';');
+
+    const cardHead = document.createElement('div');
+    cardHead.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid #eee;';
+
+    const cardTitle = document.createElement('span');
+    cardTitle.style.cssText = 'font-weight:700;font-size:13px;flex:1;';
+    cardTitle.textContent = 'Statcast';
+    cardHead.appendChild(cardTitle);
+    card.appendChild(cardHead);
+
+    const cardBody = document.createElement('div');
+    const loadingEl = document.createElement('p');
+    loadingEl.style.cssText = 'font-size:12px;color:#aaa;margin:0;';
+    loadingEl.textContent = 'Loading…';
+    cardBody.appendChild(loadingEl);
+    card.appendChild(cardBody);
+
+    const pageHeader = document.querySelector('header.page-header, .page-header');
+    if (pageHeader) {
+      const wrapper = document.createElement('div');
+      wrapper.style.cssText = 'display:flex;align-items:flex-start;gap:16px;';
+      pageHeader.parentElement.insertBefore(wrapper, pageHeader);
+      wrapper.appendChild(pageHeader);
+      pageHeader.style.flex = '1 1 auto';
+      pageHeader.style.minWidth = '0';
+      card.style.flex = '0 0 500px';
+      card.style.margin = '0';
+      wrapper.appendChild(card);
+    } else {
+      const h1 = document.querySelector('h1');
+      if (h1?.parentElement) {
+        h1.parentElement.insertBefore(card, h1.nextSibling);
+      } else {
+        const mainEl = document.querySelector('main') || document.body;
+        mainEl.insertBefore(card, mainEl.firstChild);
+      }
+    }
+
+    await OttoStatcast.init();
+    const stats = await OttoStatcast.getStatsOrFetch(ottId, leagueId, playerName, 'batter');
+
+    if (stats?.mlbam_id) {
+      const slug = (playerName || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+      const savantUrl = `https://baseballsavant.mlb.com/savant-player/${slug}-${stats.mlbam_id}`;
+      const savantA = document.createElement('a');
+      savantA.href = savantUrl;
+      savantA.target = '_blank';
+      savantA.rel = 'noopener noreferrer';
+      savantA.className = 'otto-savant-link';
+      savantA.style.cssText = 'font-size:11px;color:#1a6faf;text-decoration:none;';
+      savantA.textContent = 'Open Savant ↗';
+      cardHead.appendChild(savantA);
+    }
+
+    const editA = document.createElement('a');
+    editA.href = '#';
+    editA.className = 'otto-edit-link';
+    editA.style.cssText = 'font-size:11px;color:#888;text-decoration:none;cursor:pointer;';
+    editA.textContent = '✏️ Set ID';
+    editA.addEventListener('click', e => {
+      e.preventDefault();
+      showEditPopup(ottId, playerName, cardHead);
+    });
+    cardHead.appendChild(editA);
+
+    cardBody.innerHTML = '';
+    if (stats?.percentiles) {
+      cardBody.appendChild(renderPercentileGrid(stats.percentiles, stats.raw));
+    } else if (stats?.raw) {
+      cardBody.appendChild(renderRawGrid(stats.raw, stats.raw?.pa));
+    } else {
+      const noData = document.createElement('p');
+      noData.style.cssText = 'font-size:12px;color:#888;margin:0;';
+      noData.textContent = 'No Statcast data available. Use ✏️ Set ID to map this player to Baseball Savant.';
+      cardBody.appendChild(noData);
     }
 
   } else {
