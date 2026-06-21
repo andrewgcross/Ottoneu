@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         Ottoneu – Statcast
 // @namespace    https://ottoneu.fangraphs.com/
-// @version      1.4
+// @version      1.5
 // @description  Adds Baseball Savant Statcast percentile columns to Ottoneu setlineups, search, and player pages
 // @match        https://ottoneu.fangraphs.com/*/setlineups*
 // @match        https://ottoneu.fangraphs.com/*/search*
+// @match        https://ottoneu.fangraphs.com/*/team*
 // @match        https://ottoneu.fangraphs.com/*/players/*
 // @grant        GM_xmlhttpRequest
 // @connect      baseballsavant.mlb.com
@@ -1167,7 +1168,7 @@ var OttoStatcastUI = (() => { // eslint-disable-line no-var
     }
 
   } else {
-    // Search page
+    // Search and roster pages (/search*, /*/team*)
     _style.textContent = [
       '.otto-savant-link, .otto-edit-link { text-decoration: none !important; }',
       'main { max-width: none !important; }',
@@ -1175,6 +1176,11 @@ var OttoStatcastUI = (() => { // eslint-disable-line no-var
       'th.otto-stat-header[data-otto-sort="desc"]::after { content: " ↓"; }',
     ].join('\n');
     document.head.appendChild(_style);
+
+    if (pathParts[2] === 'team') {
+      const _mainEl = document.querySelector('main');
+      if (_mainEl) _mainEl.style.setProperty('max-width', '1700px', 'important');
+    }
 
     function _cellSortVal(td) {
       if (!td) return null;
@@ -1249,7 +1255,7 @@ var OttoStatcastUI = (() => { // eslint-disable-line no-var
 
     function findResultsTables() {
       const tables = [...document.querySelectorAll('table')].filter(t =>
-        t.querySelector('a[href*="/players/"]')
+        t.querySelector('a[href*="/players/"]') && !t.closest('.sidebar-layout__secondary')
       );
       if (!tables.length) {
         const allTables = document.querySelectorAll('table');
