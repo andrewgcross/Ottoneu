@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ottoneu – Statcast
 // @namespace    https://ottoneu.fangraphs.com/
-// @version      1.1
+// @version      1.3
 // @description  Adds Baseball Savant Statcast percentile columns to Ottoneu setlineups, search, and player pages
 // @match        https://ottoneu.fangraphs.com/*/setlineups*
 // @match        https://ottoneu.fangraphs.com/*/search*
@@ -17,7 +17,7 @@ var OttoStatcast = (() => { // eslint-disable-line no-var
   'use strict';
 
   const DB_NAME = 'OttoStatcast';
-  const DB_VERSION = 5;
+  const DB_VERSION = 6;
   const YEAR = new Date().getFullYear();
 
   const TTL = {
@@ -46,6 +46,7 @@ var OttoStatcast = (() => { // eslint-disable-line no-var
     bat_speed: 'bat_speed',
     squared_up: 'squared_up_rate',
     oaa: 'oaa',
+    fb_vel: 'fastball_avg_speed', // pitcher percentile CSV column — verify on first fetch
   };
 
   const ST_COL = { // swing-take leaderboard CSV
@@ -100,6 +101,13 @@ var OttoStatcast = (() => { // eslint-disable-line no-var
           const meta = tx.objectStore('meta');
           meta.delete(`pctl_batter_${YEAR}`);
           meta.delete(`pctl_pitcher_${YEAR}`);
+        }
+
+        // v6: initial pitcher percentile support; purge pitcher cache to force fresh download.
+        if (e.oldVersion < 6 && d.objectStoreNames.contains('meta')) {
+          const meta = tx.objectStore('meta');
+          meta.delete(`pctl_pitcher_${YEAR}`);
+          meta.delete(`exp_pitcher_${YEAR}`);
         }
       };
       r.onsuccess = e => { _db = e.target.result; res(_db); };
@@ -301,7 +309,7 @@ var OttoStatcast = (() => { // eslint-disable-line no-var
     const m = await _get('meta', mkey);
     if (m && Date.now() - m.v < TTL.BULK) return;
 
-    const csvType = type === 'batter' ? 'batter' : 'pitchers';
+    const csvType = type === 'batter' ? 'batter' : 'pitcher';
     const url = `https://baseballsavant.mlb.com/leaderboard/percentile-rankings` +
                 `?type=${csvType}&year=${year}&team=&csv=true`;
     console.log(`[OttoStatcast] Fetching ${year} ${type} percentile rankings…`);
@@ -338,6 +346,7 @@ var OttoStatcast = (() => { // eslint-disable-line no-var
           bat_speed: _i(r[C.bat_speed]),
           squared_up: _i(r[C.squared_up]),
           oaa: _i(r[C.oaa]),
+          fb_vel: _i(r[C.fb_vel]),
         },
         pctl_at: now,
       });
@@ -520,11 +529,14 @@ var OttoStatcast = (() => { // eslint-disable-line no-var
 
   async function init() {
     await _open();
-    await Promise.allSettled([
+    const [b, p, st] = await Promise.allSettled([
       _refreshPercentiles('batter'),
+      _refreshPercentiles('pitcher'),
       _refreshSwingTake(),
     ]);
-    _refreshPercentiles('pitcher').catch(e => console.error('[OttoStatcast] Pitcher pctl:', e));
+    if (b.status === 'rejected') console.error('[OttoStatcast] Batter pctl:', b.reason);
+    if (p.status === 'rejected') console.error('[OttoStatcast] Pitcher pctl:', p.reason);
+    if (st.status === 'rejected') console.error('[OttoStatcast] Swing-take:', st.reason);
     _refreshExpected('batter').catch(e => console.error('[OttoStatcast] Batter exp:', e));
     _refreshExpected('pitcher').catch(e => console.error('[OttoStatcast] Pitcher exp:', e));
   }
@@ -926,11 +938,20 @@ var OttoStatcastUI = (() => { // eslint-disable-line no-var
   const isPlayerPage = pathParts[2] === 'players' && /^\d+$/.test(pathParts[3] || '') && !pathParts[4];
 
   const COLS = [
-    { pctlKey: null, rawKey: 'runs_all', label: 'Runs', type: 'run_value', fmt: v => (v >= 0 ? '+' : '') + v.toFixed(1) },
-    { pctlKey: 'xwoba', rawKey: 'xwoba', label: 'xwOBA', inverted: false, fmt: v => v.toFixed(3) },
-    { pctlKey: 'hard_hit', rawKey: 'hard_hit_pct', label: 'HH%', inverted: false, fmt: v => v.toFixed(1) + '%' },
-    { pctlKey: 'barrel', rawKey: 'barrel_pct', label: 'Brrl%', inverted: false, fmt: v => v.toFixed(1) + '%' },
-    { pctlKey: 'k_pct', rawKey: 'k_pct', label: 'K%', inverted: false, fmt: v => v.toFixed(1) + '%' },
+    { pctlKey: null,       rawKey: 'runs_all',     label: 'Runs',   type: 'run_value', fmt: v => (v >= 0 ? '+' : '') + v.toFixed(1) },
+    { pctlKey: 'xwoba',   rawKey: 'xwoba',        label: 'xwOBA',  inverted: false, fmt: v => v.toFixed(3) },
+    { pctlKey: 'hard_hit', rawKey: 'hard_hit_pct', label: 'HH%',    inverted: false, fmt: v => v.toFixed(1) + '%' },
+    { pctlKey: 'barrel',  rawKey: 'barrel_pct',   label: 'Brrl%',  inverted: false, fmt: v => v.toFixed(1) + '%' },
+    { pctlKey: 'k_pct',   rawKey: 'k_pct',        label: 'K%',     inverted: false, fmt: v => v.toFixed(1) + '%' },
+  ];
+
+  const PITCHER_COLS = [
+    { pctlKey: 'xwoba',  rawKey: 'xwoba', label: 'xwOBA',  inverted: false, fmt: v => v.toFixed(3) },
+    { pctlKey: 'xiso',   rawKey: null,    label: 'xISO',   inverted: false, fmt: v => v.toFixed(3) },
+    { pctlKey: 'barrel', rawKey: null,    label: 'Brl%',   inverted: false, fmt: v => v.toFixed(1) + '%' },
+    { pctlKey: 'ev',     rawKey: null,    label: 'EV',     inverted: false, fmt: v => v.toFixed(1) },
+    { pctlKey: 'whiff',  rawKey: null,    label: 'Whiff%', inverted: false, fmt: v => v.toFixed(1) + '%' },
+    { pctlKey: 'fb_vel', rawKey: null,    label: 'FB Vel', inverted: false, fmt: v => v.toFixed(1) },
   ];
 
   if (isLineup) {
@@ -938,17 +959,15 @@ var OttoStatcastUI = (() => { // eslint-disable-line no-var
     document.head.appendChild(_style);
 
     const _mainEl = document.querySelector('main');
-    if (_mainEl) {
-      const _currentMax = parseInt(getComputedStyle(_mainEl).maxWidth, 10);
-      _mainEl.style.maxWidth = (isNaN(_currentMax) ? 1300 : _currentMax + 100) + 'px';
-    }
+    if (_mainEl) _mainEl.style.maxWidth = '1700px';
 
-    function addHeaders(table) {
+    function addHeaders(table, cols) {
       const row = table.querySelector('thead tr') || table.querySelector('tr:first-child');
-      if (!row) return;
-      COLS.forEach(col => {
+      if (!row || row.querySelector('.otto-stat-header')) return;
+      cols.forEach(col => {
         const th = document.createElement('th');
         th.textContent = col.label;
+        th.className = 'otto-stat-header';
         th.title = col.type === 'run_value'
           ? `${col.label}: Swing/Take Run Value (qualified batters only)`
           : `Statcast: ${col.label} · circle = percentile · * = raw (unqualified)`;
@@ -962,10 +981,11 @@ var OttoStatcastUI = (() => { // eslint-disable-line no-var
     const table = document.querySelector('table.lineup-table.batter');
     if (!table) return;
 
-    addHeaders(table);
+    addHeaders(table, COLS);
 
     for (const row of table.querySelectorAll('tbody tr')) {
       if (row.hasAttribute('style')) continue;
+      if (row.classList.contains('statHeaders')) continue;
 
       const posTd = row.querySelector('td[data-position]');
       const nameTd = row.querySelector('td.player-name');
@@ -1002,6 +1022,52 @@ var OttoStatcastUI = (() => { // eslint-disable-line no-var
           const bio = row.querySelector('.lineup-player-bio');
           addPlayerLinks(bio, playerName, ottId, null);
         });
+    }
+
+    const pitcherTable = document.querySelector('table.lineup-table.pitcher');
+    if (pitcherTable && pitcherTable !== table) {
+      addHeaders(pitcherTable, PITCHER_COLS);
+
+      for (const row of pitcherTable.querySelectorAll('tbody tr')) {
+        if (row.hasAttribute('style')) continue;
+        if (row.classList.contains('statHeaders')) continue;
+
+        const posTd = row.querySelector('td[data-position]');
+        const nameTd = row.querySelector('td.player-name');
+        const ottId = posTd?.getAttribute('data-player-id');
+        const playerName = nameTd?.querySelector('a')?.textContent?.trim() || null;
+
+        if (!ottId || nameTd?.classList.contains('empty_slot')) {
+          PITCHER_COLS.forEach(() => {
+            const td = document.createElement('td');
+            td.style.cssText = 'text-align:center;font-size:11px;color:#aaa;';
+            td.textContent = '—';
+            row.appendChild(td);
+          });
+          continue;
+        }
+
+        const placeholders = PITCHER_COLS.map(() => {
+          const td = document.createElement('td');
+          td.style.cssText = 'text-align:center;font-size:11px;color:#ccc;vertical-align:middle;';
+          td.textContent = '…';
+          row.appendChild(td);
+          return td;
+        });
+
+        OttoStatcast.getStatsOrFetch(ottId, leagueId, playerName, 'pitcher')
+          .then(stats => {
+            PITCHER_COLS.forEach((col, i) => placeholders[i].replaceWith(buildCell(stats, col)));
+            const bio = row.querySelector('.lineup-player-bio');
+            addPlayerLinks(bio, playerName, ottId, stats?.mlbam_id || null);
+          })
+          .catch(err => {
+            console.warn(`[OttoStatcast] pitcher otto_id ${ottId}:`, err);
+            placeholders.forEach(td => { td.textContent = '?'; td.style.color = '#c00'; });
+            const bio = row.querySelector('.lineup-player-bio');
+            addPlayerLinks(bio, playerName, ottId, null);
+          });
+      }
     }
 
   } else if (isPlayerPage) {

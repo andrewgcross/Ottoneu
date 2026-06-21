@@ -67,14 +67,18 @@ Arm strength is relevant for outfielders and catchers; could be added to a Field
 
 ---
 
-## 6. Pitcher page scripts not yet written
+## 6. Pitcher columns on search page not yet written
 
-`otto-statcast.user.js` fully supports pitchers (`type='pitcher'` throughout, separate
-percentile + expected stats fetches) but no TamperMonkey page script has been written yet.
+The setlineups pitcher table (`table.lineup-table.pitcher`) is covered with columns:
+xwOBA, xISO, Brl%, EV, Whiff%, FB Vel. Still missing:
 
-**High-value targets:**
-- `setlineups` pitcher table (same page as the batter script, selector: `table.lineup-table.pitcher`)
-- Search page results filtered to SP/RP
+- **Search page** — pitcher results could use PITCHER_COLS but requires detecting player
+  type per row, which isn't currently available in the search result HTML.
+
+**FB Vel column name needs verification.** Currently mapped to `fastball_avg_speed` in
+`PCT_COL`. On first load of a setlineups page the pitcher percentile CSV headers are
+logged as `[OttoStatcast] Percentile CSV headers: ...` — confirm `fastball_avg_speed`
+appears and update `PCT_COL.fb_vel` in `otto-statcast.user.js` if the column name differs.
 
 ---
 
