@@ -47,12 +47,17 @@ would lack barrel data, and they'd also lack most other metrics.
 
 ---
 
-## 5. CSV column names — verified 2026-06-13
+## 5. CSV column names
 
-**Percentile CSV** (`percentile-rankings?type=batter`):
+**Batter percentile CSV** (`percentile-rankings?type=batter`) — verified 2026-06-13:
 `player_name, player_id, year, xwoba, xba, xslg, xiso, xobp, brl_percent, exit_velocity,
 max_ev, hard_hit_percent, k_percent, bb_percent, whiff_percent, chase_percent, arm_strength,
 sprint_speed, oaa, bat_speed, squared_up_rate, swing_length`
+
+**Pitcher percentile CSV** (`percentile-rankings?type=pitcher`) — verified 2026-06-21:
+`player_name, player_id, year, xwoba, xba, xslg, xiso, xobp, brl, brl_percent, exit_velocity,
+max_ev, hard_hit_percent, k_percent, bb_percent, whiff_percent, chase_percent, arm_strength,
+xera, fb_velocity, fb_spin, curve_spin`
 
 **Expected stats CSV** (`expected_statistics?min=1`):
 `last_name, first_name, player_id, year, pa, bip, ba, est_ba, est_ba_minus_ba_diff, slg,
@@ -61,28 +66,13 @@ est_slg, est_slg_minus_slg_diff, woba, est_woba, est_woba_minus_woba_diff`
 Note: expected stats CSV contains only xBA/xSLG/xwOBA differentials — no EV, barrel%,
 hard hit%, whiff%, K%, or BB%. Those are percentile-circle-only for qualified players.
 
-Note: `arm_strength` and `swing_length` are stored in the `pctl_${year}` object but are
-not currently displayed in the popup (`POPUP_SECTIONS` in `otto-statcast.user.js`).
-Arm strength is relevant for outfielders and catchers; could be added to a Fielding section.
+Note: `arm_strength`, `swing_length`, `fb_spin`, and `curve_spin` are stored in
+`pctl_${year}` but not displayed anywhere. Arm strength is relevant for outfielders/catchers;
+spin rates could be added to a pitcher popup section.
 
 ---
 
-## 6. Pitcher columns on search page not yet written
-
-The setlineups pitcher table (`table.lineup-table.pitcher`) is covered with columns:
-xwOBA, xISO, Brl%, EV, Whiff%, FB Vel. Still missing:
-
-- **Search page** — pitcher results could use PITCHER_COLS but requires detecting player
-  type per row, which isn't currently available in the search result HTML.
-
-**FB Vel column name needs verification.** Currently mapped to `fastball_avg_speed` in
-`PCT_COL`. On first load of a setlineups page the pitcher percentile CSV headers are
-logged as `[OttoStatcast] Percentile CSV headers: ...` — confirm `fastball_avg_speed`
-appears and update `PCT_COL.fb_vel` in `otto-statcast.user.js` if the column name differs.
-
----
-
-## 7. Remaining high-value page targets
+## 6. Remaining high-value page targets
 
 `otto-statcast.user.js` currently covers setlineups, search, and individual player pages. Still missing:
 
