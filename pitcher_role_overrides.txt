@@ -1,0 +1,12 @@
+# Pitcher role overrides
+# Use when a pitcher has both SP and RP Ottoneu eligibility but is currently
+# used in only one role by their MLB team. Ottoneu only awards points when the
+# pitcher is in the slot matching their actual MLB usage.
+#
+# Format: Display Name = SP or RP
+#   SP = currently in the rotation (won't fill RP slots)
+#   RP = currently a reliever (won't fill SP slots)
+#
+# Example:
+# Spencer Strider = SP
+# Cristopher Sanchez = RP

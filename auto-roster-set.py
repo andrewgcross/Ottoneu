@@ -23,6 +23,7 @@ import os
 import json
 from return_hot_offenses import return_hot_offenses
 from return_games_played import return_games_played
+from pitcher_overrides import load_pitcher_overrides
 
 # This loads the variables from the .env file into the system environment
 load_dotenv()
@@ -597,6 +598,18 @@ if soup.find(id="team-switcher-menu"):
 
   df_pitchers = pd.DataFrame(parsed_pitchers, columns=pd.Index(["id", "pos", "locked", "gamescheduled", "Name", "SP", "RP", "Starting", "Following", "Location", "Opponent", "Start Time", "P/IP"] + pc_cols))
 
+  # Apply pitcher role overrides — strips ineligible slot from SP/RP dual-eligible pitchers
+  pitcher_overrides = load_pitcher_overrides()
+  for name, role in pitcher_overrides.items():
+      mask = df_pitchers['Name'] == name
+      if not mask.any():
+          print(f"Warning: pitcher_role_overrides.txt: '{name}' not found on roster")
+          continue
+      if role == 'SP':
+          df_pitchers.loc[mask, 'RP'] = False
+      elif role == 'RP':
+          df_pitchers.loc[mask, 'SP'] = False
+
   # Load today's hot-offense teams; fetch from FanGraphs if not yet cached for today
   try:
     with open('hot_offenses.json', 'r') as f:
@@ -639,6 +652,7 @@ if soup.find(id="team-switcher-menu"):
   # Fill SP slots: confirmed starters with SP eligibility, pulled from bench
   while df_pitchers[(df_pitchers['pos'] == 'SP') & df_pitchers['id'].isnull()].shape[0] > 0:
     sp_candidates = df_pitchers[
+      (df_pitchers['SP'] == True) &
       (df_pitchers['Starting'] == True) &
       (df_pitchers['gamescheduled'] == True) &
       (df_pitchers['locked'] != True) &
