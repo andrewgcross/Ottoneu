@@ -20,6 +20,7 @@ def create_env_file():
             f.write(f"TARGET_DATE={target_date}\n")
         f.write(f"HOT_OFFENSE_WEEKS=3\n")
         f.write(f"CATCHER_SLOTS_TO_FILL=2\n")
+        f.write(f"PITCHER_OVERRIDE_STRICT=false\n")
 
     with open("hot_offenses.json", "w") as f:
         json.dump({}, f)

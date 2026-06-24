@@ -40,6 +40,8 @@ except ValueError:
     print(f"Warning: CATCHER_SLOTS_TO_FILL='{_catcher_raw}' is invalid (must be 1 or 2). Defaulting to 2.")
     catcher_slots_to_fill = 2
 
+pitcher_override_strict = os.getenv("PITCHER_OVERRIDE_STRICT", "false").lower() == "true"
+
 session = requests.Session()
 session.headers.update({
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -626,21 +628,28 @@ if soup.find(id="team-switcher-menu"):
   # --- Bench out pitchers in the wrong slot ---
 
   # SP slot: bench anyone not confirmed as today's starter (not-starting, followers, no-game)
-  for _, p_row in df_pitchers[df_pitchers['id'].notna()].query(
-    "pos == 'SP' and not locked and Starting != True"
-  ).iterrows():
+  # In strict override mode, also evict RP-override pitchers (SP=False) even when Starting=True
+  sp_evict_mask = (df_pitchers['Starting'] != True)
+  if pitcher_override_strict:
+      sp_evict_mask = sp_evict_mask | (df_pitchers['SP'] == False)
+  for _, p_row in df_pitchers[
+      df_pitchers['id'].notna() &
+      (df_pitchers['pos'] == 'SP') &
+      (df_pitchers['locked'] != True) &
+      sp_evict_mask
+  ].iterrows():
     callajax(today, p_row['id'], 'SP', 'Bench', p_row['Name'])
     df_pitchers.loc[df_pitchers['id'] == p_row['id'], 'pos'] = 'Bench'
     df_pitchers = pd.concat([df_pitchers, pd.DataFrame([{'pos': 'SP'}])], ignore_index=True)
     # print(f"SP → Bench, {p_row['Name']}")
 
-  # RP slot: bench confirmed starters (they need an SP slot), fatigued relievers (pitched 2 days in a row), and anyone with no game
+  # RP slot: bench confirmed starters with SP eligibility (they need an SP slot), fatigued relievers (pitched 2 days in a row), and anyone with no game
   fatigued_mask = (df_pitchers['PC_1'].fillna(0) > 0) & (df_pitchers['PC_2'].fillna(0) > 0)
   for _, p_row in df_pitchers[
     df_pitchers['id'].notna() &
     (df_pitchers['pos'] == 'RP') &
     (df_pitchers['locked'] != True) &
-    ((df_pitchers['Starting'] == True) | fatigued_mask | (df_pitchers['gamescheduled'] != True))
+    (((df_pitchers['Starting'] == True) & (df_pitchers['SP'] == True)) | fatigued_mask | (df_pitchers['gamescheduled'] != True))
   ].iterrows():
     callajax(today, p_row['id'], 'RP', 'Bench', p_row['Name'])
     df_pitchers.loc[df_pitchers['id'] == p_row['id'], 'pos'] = 'Bench'

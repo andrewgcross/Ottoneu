@@ -18,5 +18,7 @@ def load_pitcher_overrides(filepath="pitcher_role_overrides.txt"):
             if role not in ('SP', 'RP'):
                 print(f"Warning: {filepath} line {i}: unrecognized role {role!r} for '{name}' (expected SP or RP)")
                 continue
+            if name in overrides:
+                print(f"Warning: {filepath} line {i}: '{name}' is defined more than once — using latest value ({role!r})")
             overrides[name] = role
     return overrides

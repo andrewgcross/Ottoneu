@@ -45,3 +45,10 @@ def test_whitespace_around_name_and_role_is_trimmed(tmp_path):
     f.write_text("  Spencer Strider  =  SP  \n")
     result = load_pitcher_overrides(str(f))
     assert result == {"Spencer Strider": "SP"}
+
+def test_warns_on_duplicate_name(tmp_path, capsys):
+    f = tmp_path / "overrides.txt"
+    f.write_text("Spencer Strider = SP\nSpencer Strider = RP\n")
+    result = load_pitcher_overrides(str(f))
+    assert result == {"Spencer Strider": "RP"}
+    assert "Warning" in capsys.readouterr().out
