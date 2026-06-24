@@ -1,6 +1,6 @@
 .claude
 .idea
-/docs/
+/docs/*
 .env
 .notes
 CLAUDE.md
