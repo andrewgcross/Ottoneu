@@ -1034,7 +1034,7 @@ var OttoStatcastUI = (() => { // eslint-disable-line no-var
     if (pitcherTable && pitcherTable !== table) {
       addHeaders(pitcherTable, PITCHER_COLS);
 
-      for (const row of pitcherTable.querySelectorAll('tbody tr')) {
+      for (const row of pitcherTable.querySelectorAll(':scope > tbody > tr')) {
         if (row.hasAttribute('style')) continue;
         if (row.classList.contains('statHeaders')) continue;
 
