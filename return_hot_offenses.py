@@ -1,3 +1,4 @@
+import re
 import requests
 import datetime
 from dotenv import load_dotenv
@@ -24,8 +25,9 @@ def return_hot_offenses(session=None):
             if not isinstance(row, dict):
                 continue
             try:
-                if float(row.get('Off', 0)) > 0:
-                    team = row.get('Team', '')
+                if float(row.get('Offense', 0)) > 0:
+                    team_raw = row.get('Team', '') or ''
+                    team = re.sub(r'<[^>]+>', '', team_raw).strip()
                     if team:
                         hot_offenses.append(team)
             except (ValueError, TypeError):
