@@ -6,6 +6,7 @@
 CLAUDE.md
 hot_offenses.json
 games_played.json
+pitcher_role_overrides.txt
 movement_log.txt
 push_log.txt
 push-to-nas.bat
