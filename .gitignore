@@ -7,7 +7,11 @@ CLAUDE.md
 hot_offenses.json
 games_played.json
 movement_log.txt
+push_log.txt
+push-to-nas.bat
 closer_depth_chart*
+
+
 
 # OS generated files #
 ######################
