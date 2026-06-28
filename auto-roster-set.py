@@ -643,7 +643,7 @@ if soup.find(id="team-switcher-menu"):
 
   if today not in hot_offenses_data:
     print("Hot offense data not cached for today — fetching from FanGraphs...")
-    hot_offense_teams = return_hot_offenses()
+    hot_offense_teams = return_hot_offenses(session=session)
   else:
     hot_offense_teams = hot_offenses_data[today]
 
