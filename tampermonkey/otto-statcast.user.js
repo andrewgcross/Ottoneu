@@ -1104,7 +1104,7 @@ var OttoStatcastUI = (() => { // eslint-disable-line no-var
     const playerName = document.querySelector('h1')?.textContent?.trim() || null;
     const positionsLabel = [...document.querySelectorAll('.page-header__secondary strong')]
       .find(el => el.textContent.trim() === 'Positions');
-    const isPitcher = /\b(SP|RP)\b/.test(positionsLabel?.nextElementSibling?.textContent || '');
+    const isPitcher = /\b(SP|RP)\b/.test(positionsLabel?.parentElement?.textContent || '');
 
     const card = document.createElement('div');
     card.style.cssText = [
