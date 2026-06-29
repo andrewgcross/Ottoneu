@@ -815,6 +815,25 @@ var OttoStatcastUI = (() => { // eslint-disable-line no-var
     }
   }
 
+  const PITCHER_POPUP_SECTIONS = [
+    {
+      title: 'Pitching',
+      metrics: [
+        { key: 'xwoba',    label: 'xwOBA',        rawKey: 'xwoba', fmt: v => v.toFixed(3) },
+        { key: 'xba',      label: 'xBA',           rawKey: 'xba',   fmt: v => v.toFixed(3) },
+        { key: 'xslg',     label: 'xSLG',          rawKey: 'xslg',  fmt: v => v.toFixed(3) },
+        { key: 'ev',       label: 'Avg Exit Velo',  rawKey: null },
+        { key: 'barrel',   label: 'Barrel %',       rawKey: null },
+        { key: 'hard_hit', label: 'Hard-Hit %',     rawKey: null },
+        { key: 'fb_vel',   label: 'FB Velocity',    rawKey: null,   fmt: v => v.toFixed(1) },
+        { key: 'chase',    label: 'Chase %',        rawKey: null },
+        { key: 'whiff',    label: 'Whiff %',        rawKey: null },
+        { key: 'k_pct',    label: 'K %',            rawKey: null },
+        { key: 'bb_pct',   label: 'BB %',           rawKey: null },
+      ],
+    },
+  ];
+
   const POPUP_SECTIONS = [
     {
       title: 'Batting',
@@ -890,9 +909,9 @@ var OttoStatcastUI = (() => { // eslint-disable-line no-var
     return row;
   }
 
-  function renderPercentileGrid(percentiles, raw) {
+  function renderPercentileGrid(percentiles, raw, sections = POPUP_SECTIONS) {
     const container = document.createElement('div');
-    for (const section of POPUP_SECTIONS) {
+    for (const section of sections) {
       const hdr = document.createElement('div');
       hdr.style.cssText = 'font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:0.06em;margin:10px 0 4px;padding-top:8px;border-top:1px solid #eee;';
       hdr.textContent = section.title;
@@ -927,7 +946,7 @@ var OttoStatcastUI = (() => { // eslint-disable-line no-var
     return wrap;
   }
 
-  return { pctlColor, buildCell, addPlayerLinks, showEditPopup, showSavantOverlay, renderPercentileGrid, renderRawGrid };
+  return { pctlColor, buildCell, addPlayerLinks, showEditPopup, showSavantOverlay, renderPercentileGrid, renderRawGrid, PITCHER_POPUP_SECTIONS };
 })();
 
 // ── Page scripts ──────────────────────────────────────────────────────────────
@@ -935,7 +954,7 @@ var OttoStatcastUI = (() => { // eslint-disable-line no-var
 (async () => {
   'use strict';
 
-  const { buildCell, addPlayerLinks, showEditPopup, renderPercentileGrid, renderRawGrid } = OttoStatcastUI;
+  const { buildCell, addPlayerLinks, showEditPopup, renderPercentileGrid, renderRawGrid, PITCHER_POPUP_SECTIONS } = OttoStatcastUI;
 
   const _style = document.createElement('style');
   const pathParts = window.location.pathname.split('/');
@@ -1083,6 +1102,9 @@ var OttoStatcastUI = (() => { // eslint-disable-line no-var
 
     const ottId = pathParts[3];
     const playerName = document.querySelector('h1')?.textContent?.trim() || null;
+    const positionsLabel = [...document.querySelectorAll('.page-header__secondary strong')]
+      .find(el => el.textContent.trim() === 'Positions');
+    const isPitcher = /\b(SP|RP)\b/.test(positionsLabel?.nextElementSibling?.textContent || '');
 
     const card = document.createElement('div');
     card.style.cssText = [
@@ -1129,7 +1151,7 @@ var OttoStatcastUI = (() => { // eslint-disable-line no-var
     }
 
     await OttoStatcast.init();
-    const stats = await OttoStatcast.getStatsOrFetch(ottId, leagueId, playerName, 'batter');
+    const stats = await OttoStatcast.getStatsOrFetch(ottId, leagueId, playerName, isPitcher ? 'pitcher' : 'batter');
 
     if (stats?.mlbam_id) {
       const slug = (playerName || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
@@ -1157,7 +1179,7 @@ var OttoStatcastUI = (() => { // eslint-disable-line no-var
 
     cardBody.innerHTML = '';
     if (stats?.percentiles) {
-      cardBody.appendChild(renderPercentileGrid(stats.percentiles, stats.raw));
+      cardBody.appendChild(renderPercentileGrid(stats.percentiles, stats.raw, isPitcher ? PITCHER_POPUP_SECTIONS : undefined));
     } else if (stats?.raw) {
       cardBody.appendChild(renderRawGrid(stats.raw, stats.raw?.pa));
     } else {
