@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Ottoneu – Statcast
 // @namespace    https://ottoneu.fangraphs.com/
-// @version      1.5
+// @version      1.6
 // @description  Adds Baseball Savant Statcast percentile columns to Ottoneu setlineups, search, and player pages
 // @match        https://ottoneu.fangraphs.com/*/setlineups*
 // @match        https://ottoneu.fangraphs.com/*/search*
@@ -18,7 +18,7 @@ var OttoStatcast = (() => { // eslint-disable-line no-var
   'use strict';
 
   const DB_NAME = 'OttoStatcast';
-  const DB_VERSION = 7;
+  const DB_VERSION = 8;
   const YEAR = new Date().getFullYear();
 
   const TTL = {
@@ -28,7 +28,7 @@ var OttoStatcast = (() => { // eslint-disable-line no-var
 
   // ── Column name maps ──────────────────────────────────────────────────────────
 
-  const PCT_COL = { // percentile-rankings CSV (headers verified 2026-06-13)
+  const PCT_COL = { // percentile-rankings CSV (headers verified 2026-06-13; pitcher extras added 2026-06-28)
     id: 'player_id',
     name: 'player_name',
     xba: 'xba',
@@ -48,6 +48,9 @@ var OttoStatcast = (() => { // eslint-disable-line no-var
     squared_up: 'squared_up_rate',
     oaa: 'oaa',
     fb_vel: 'fb_velocity',
+    xera: 'xera',
+    gb_pct: 'groundball_percent',
+    extension: 'pitcher_extension',
   };
 
   const ST_COL = { // swing-take leaderboard CSV
@@ -63,6 +66,21 @@ var OttoStatcast = (() => { // eslint-disable-line no-var
     xba: 'est_ba',
     xslg: 'est_slg',
     xwoba: 'est_woba',
+  };
+
+  const PIT_STAT_COL = { // statcast pitcher leaderboard CSV (column names unverified — check console on first load)
+    id: 'player_id',
+    xera: 'est_era',
+    fb_vel: 'fastball_avg_speed',
+    ev: 'exit_velocity_avg',
+    chase: 'oz_swing_percent',
+    whiff: 'whiff_percent',
+    k_pct: 'k_percent',
+    bb_pct: 'bb_percent',
+    barrel: 'barrel_batted_rate',
+    hard_hit: 'hard_hit_percent',
+    gb_pct: 'groundballs_percent',
+    extension: 'pitcher_extension',
   };
 
   // ── IndexedDB ─────────────────────────────────────────────────────────────────
@@ -115,8 +133,21 @@ var OttoStatcast = (() => { // eslint-disable-line no-var
         if (e.oldVersion < 7 && d.objectStoreNames.contains('meta')) {
           tx.objectStore('meta').delete(`pctl_pitcher_${YEAR}`);
         }
+
+        // v8: added xera, gb_pct, extension to pitcher percentile storage; re-fetch to populate.
+        if (e.oldVersion < 8 && d.objectStoreNames.contains('meta')) {
+          tx.objectStore('meta').delete(`pctl_pitcher_${YEAR}`);
+        }
       };
-      r.onsuccess = e => { _db = e.target.result; res(_db); };
+      r.onsuccess = e => {
+        _db = e.target.result;
+        _db.onversionchange = () => { _db.close(); _db = null; };
+        res(_db);
+      };
+      r.onblocked = () => {
+        console.warn('[OttoStatcast] DB upgrade blocked by another tab — close other Ottoneu tabs and reload.');
+        rej(new Error('IndexedDB upgrade blocked'));
+      };
       r.onerror = e => rej(e.target.error);
     });
   }
@@ -324,6 +355,10 @@ var OttoStatcast = (() => { // eslint-disable-line no-var
     if (rows[0]) console.log('[OttoStatcast] Percentile CSV headers:', Object.keys(rows[0]).join(', '));
 
     const C = PCT_COL;
+    if (type === 'pitcher' && rows[0]) {
+      const missing = [C.xera, C.gb_pct, C.extension].filter(col => !(col in rows[0]));
+      if (missing.length) console.warn('[OttoStatcast] Pitcher-specific CSV columns not found (check PCT_COL):', missing.join(', '));
+    }
     const now = Date.now();
     const updates = [];
 
@@ -353,6 +388,9 @@ var OttoStatcast = (() => { // eslint-disable-line no-var
           squared_up: _i(r[C.squared_up]),
           oaa: _i(r[C.oaa]),
           fb_vel: _i(r[C.fb_vel]),
+          xera: _i(r[C.xera]),
+          gb_pct: _i(r[C.gb_pct]),
+          extension: _i(r[C.extension]),
         },
         pctl_at: now,
       });
@@ -436,6 +474,52 @@ var OttoStatcast = (() => { // eslint-disable-line no-var
     console.log(`[OttoStatcast] Swing-take: ${updates.length} records for ${year}`);
   }
 
+  // ── Bulk: pitcher raw stats ───────────────────────────────────────────────────
+
+  async function _refreshPitcherStats(year = YEAR) {
+    const mkey = `pitcher_raw_${year}`;
+    const m = await _get('meta', mkey);
+    if (m && Date.now() - m.v < TTL.BULK) return;
+
+    const url = `https://baseballsavant.mlb.com/leaderboard/statcast` +
+                `?type=pitcher&year=${year}&position=&team=&min=q&csv=true`;
+    console.log(`[OttoStatcast] Fetching ${year} pitcher raw stats…`);
+
+    const rows = _csv(await _fetch(url));
+    if (rows[0]) console.log('[OttoStatcast] Pitcher raw stats CSV headers:', Object.keys(rows[0]).join(', '));
+
+    const C = PIT_STAT_COL;
+    const now = Date.now();
+    const updates = [];
+
+    for (const r of rows) {
+      if (!r[C.id]) continue;
+      const existing = await _get('players', String(r[C.id])) || {};
+      updates.push({
+        ...existing,
+        mlbam_id: String(r[C.id]),
+        [`pitcher_raw_${year}`]: {
+          xera: _f(r[C.xera]),
+          fb_vel: _f(r[C.fb_vel]),
+          ev: _f(r[C.ev]),
+          chase: _f(r[C.chase]),
+          whiff: _f(r[C.whiff]),
+          k_pct: _f(r[C.k_pct]),
+          bb_pct: _f(r[C.bb_pct]),
+          barrel: _f(r[C.barrel]),
+          hard_hit: _f(r[C.hard_hit]),
+          gb_pct: _f(r[C.gb_pct]),
+          extension: _f(r[C.extension]),
+        },
+        pitcher_raw_at: now,
+      });
+    }
+
+    await _putBatch('players', updates);
+    await _put('meta', { key: mkey, v: now });
+    console.log(`[OttoStatcast] Pitcher raw stats: ${updates.length} records for ${year}`);
+  }
+
   // ── On-demand: histogram stats for unqualified players ───────────────────────
 
   async function _histStats(mlbamId) {
@@ -498,7 +582,8 @@ var OttoStatcast = (() => { // eslint-disable-line no-var
     const rawCSV = p[`raw_${YEAR}`] || {};
     const rawOnDemand = p[`ondemand_${YEAR}`] || {};
     const rawST = p[`st_${YEAR}`] || {};
-    const merged = { ...rawOnDemand, ...rawCSV, ...rawST };
+    const rawPitcher = p[`pitcher_raw_${YEAR}`] || {};
+    const merged = { ...rawOnDemand, ...rawCSV, ...rawST, ...rawPitcher };
     const raw = Object.values(merged).some(v => v != null) ? merged : null;
 
     return {
@@ -545,6 +630,7 @@ var OttoStatcast = (() => { // eslint-disable-line no-var
     if (st.status === 'rejected') console.error('[OttoStatcast] Swing-take:', st.reason);
     _refreshExpected('batter').catch(e => console.error('[OttoStatcast] Batter exp:', e));
     _refreshExpected('pitcher').catch(e => console.error('[OttoStatcast] Pitcher exp:', e));
+    _refreshPitcherStats().catch(e => console.error('[OttoStatcast] Pitcher raw stats:', e));
   }
 
   function _i(v) { const n = parseInt(v, 10); return isNaN(n) ? null : n; }
@@ -819,17 +905,18 @@ var OttoStatcastUI = (() => { // eslint-disable-line no-var
     {
       title: 'Pitching',
       metrics: [
-        { key: 'xwoba',    label: 'xwOBA',        rawKey: 'xwoba', fmt: v => v.toFixed(3) },
-        { key: 'xba',      label: 'xBA',           rawKey: 'xba',   fmt: v => v.toFixed(3) },
-        { key: 'xslg',     label: 'xSLG',          rawKey: 'xslg',  fmt: v => v.toFixed(3) },
-        { key: 'ev',       label: 'Avg Exit Velo',  rawKey: null },
-        { key: 'barrel',   label: 'Barrel %',       rawKey: null },
-        { key: 'hard_hit', label: 'Hard-Hit %',     rawKey: null },
-        { key: 'fb_vel',   label: 'FB Velocity',    rawKey: null,   fmt: v => v.toFixed(1) },
-        { key: 'chase',    label: 'Chase %',        rawKey: null },
-        { key: 'whiff',    label: 'Whiff %',        rawKey: null },
-        { key: 'k_pct',    label: 'K %',            rawKey: null },
-        { key: 'bb_pct',   label: 'BB %',           rawKey: null },
+        { key: 'xera', label: 'xERA', rawKey: 'xera', fmt: v => v.toFixed(2) },
+        { key: 'xba', label: 'xBA', rawKey: 'xba', fmt: v => v.toFixed(3) },
+        { key: 'fb_vel', label: 'Fastball Velo', rawKey: 'fb_vel', fmt: v => v.toFixed(1) },
+        { key: 'ev', label: 'Avg Exit Velo', rawKey: 'ev', fmt: v => v.toFixed(1) },
+        { key: 'chase', label: 'Chase %', rawKey: 'chase', fmt: v => v.toFixed(1) + '%' },
+        { key: 'whiff', label: 'Whiff %', rawKey: 'whiff', fmt: v => v.toFixed(1) + '%' },
+        { key: 'k_pct', label: 'K %', rawKey: 'k_pct', fmt: v => v.toFixed(1) + '%' },
+        { key: 'bb_pct', label: 'BB %', rawKey: 'bb_pct', fmt: v => v.toFixed(1) + '%' },
+        { key: 'barrel', label: 'Barrel %', rawKey: 'barrel', fmt: v => v.toFixed(1) + '%' },
+        { key: 'hard_hit', label: 'Hard-Hit %', rawKey: 'hard_hit', fmt: v => v.toFixed(1) + '%' },
+        { key: 'gb_pct', label: 'GB %', rawKey: 'gb_pct', fmt: v => v.toFixed(1) + '%' },
+        { key: 'extension', label: 'Extension', rawKey: 'extension', fmt: v => v.toFixed(1) },
       ],
     },
   ];
